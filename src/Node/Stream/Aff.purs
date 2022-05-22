@@ -14,7 +14,21 @@ where
 
 import Prelude
 
-import Effect (Effect)
+import Control.Monad.Rec.Class (Step(..), tailRecM)
+import Control.Monad.ST.Class (liftST)
+import Control.Monad.ST.Ref as STRef
+import Data.Array.ST as Array.ST
+import Data.Either (Either(..))
+import Data.Maybe (Maybe(..))
+-- import Effect (Effect)
+import Effect.Aff (effectCanceler, makeAff)
+import Effect.Aff.Class (class MonadAff, liftAff)
+import Node.Buffer (Buffer)
+import Node.Buffer as Buffer
+import Node.Stream (Readable)
+import Node.Stream as Stream
+import Node.Stream.Internal (onceReadable)
+
 -- import Effect.Console (log)
 
 
@@ -32,9 +46,9 @@ readAll r =
     $ \res -> do
         bufs <- liftST $ Array.ST.new
 
-        onError r $ Left >>> res
+        Stream.onError r $ Left >>> res
 
-        onEnd r do
+        Stream.onEnd r do
           ret <- liftST $ Array.ST.unsafeFreeze bufs
           -- void $ writeString stderr UTF8 "end" (\_ -> pure unit)
           res $ Right ret
@@ -42,7 +56,7 @@ readAll r =
 
         -- “Adding a 'data' event handler [will] switched to flowing mode.”
         -- https://nodejs.org/docs/latest-v14.x/api/stream.html#stream_two_reading_modes
-        onData r \chunk -> do
+        Stream.onData r \chunk -> do
           void $ liftST $ Array.ST.push chunk bufs
           -- void $ writeString stderr UTF8 "data" (\_ -> pure unit)
 
@@ -66,33 +80,33 @@ readAll r =
 -- | To concatenate the result into a single `Buffer`, use
 -- | `Node.Buffer.concat :: Array Buffer -> Buffer`.
 readN :: forall m r. MonadAff m => Readable r -> Int -> m (Array Buffer)
-readN r n = liftAff <<< makeAff \res -> do
-  red <- STRef.new 0
+readN r n = liftAff <<< makeAff $ \res -> do
+  red <- liftST $ STRef.new 0
   bufs <- liftST $ Array.ST.new
 
   let
-    step _ = do
+    stepRead _ = do
       want <- map (n-_) $ liftST $ STRef.read red
       -- https://nodejs.org/docs/latest-v15.x/api/stream.html#stream_readable_read_size
       -- “If size bytes are not available to be read, null will be returned
       -- unless the stream has ended, in which case all of the data remaining
       -- in the internal buffer will be returned.”
-      read r (Just want) >>= case _ of
-        Nothing -> Done unit
+      Stream.read r (Just want) >>= case _ of
+        Nothing -> pure $ Done unit
         Just chunk -> do
-          s <- size chunk
-          liftST $ Array.ST.push chunk bufs
-          red' <- liftST $ STRef.modify red (_+s)
+          _ <- liftST $ Array.ST.push chunk bufs
+          s <- Buffer.size chunk
+          red' <- liftST $ STRef.modify (_+s) red
           if red' >= n then
-            Done unit
+            pure $ Done unit
           else
-            Step unit
+            pure $ Loop unit
 
     oneRead = do
       onceReadable r do
-        tailRecM step unit
-        r <- STRef.read red
-        if r >= n then do
+        tailRecM stepRead unit
+        m <- liftST $ STRef.read red
+        if m >= n then do
           ret <- liftST $ Array.ST.unsafeFreeze bufs
           res $ Right ret
         else
@@ -100,3 +114,4 @@ readN r n = liftAff <<< makeAff \res -> do
 
   oneRead
 
+  pure $ effectCanceler (pure unit)
