@@ -79,6 +79,10 @@ readAll r =
 -- | The result may be chunked into more than one `Buffer`.
 -- | To concatenate the result into a single `Buffer`, use
 -- | `Node.Buffer.concat :: Array Buffer -> Buffer`.
+-- |
+-- | ```
+-- | input :: Buffer <- liftEffect <<< concat =<< readAll stdin
+-- | ```
 readN :: forall m r. MonadAff m => Readable r -> Int -> m (Array Buffer)
 readN r n = liftAff <<< makeAff $ \res -> do
   red <- liftST $ STRef.new 0

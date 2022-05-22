@@ -33,7 +33,8 @@ conf //
 { sources = [ "src/**/*.purs", "test/**/*.purs", ]
 , dependencies = conf.dependencies #
   [ "spec"
-  , "psci-support"
+  , "node-process"
+  , "console"
   ]
 , packages = packages_dev
 }
