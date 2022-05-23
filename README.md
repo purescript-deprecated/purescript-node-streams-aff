@@ -7,5 +7,6 @@ Asynchronous API for *Node.js* `stream` API.
 
 https://nodejs.org/docs/latest-v14.x/api/stream.html
 
-Requires *Node.js* ≥ v14 ?
+Requires *Node.js* ≥  ?
 
+v12.9.0 readableEnded

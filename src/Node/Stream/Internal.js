@@ -3,3 +3,9 @@ export function onceReadable(s) {
     s.once("readable", f);
   };
 }
+
+export function readableEnded(s) {
+	return () => {
+		return s.readableEnded;
+	};
+}
