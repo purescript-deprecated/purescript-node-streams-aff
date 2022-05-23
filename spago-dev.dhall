@@ -34,7 +34,13 @@ conf //
 , dependencies = conf.dependencies #
   [ "spec"
   , "node-process"
+  , "node-fs"
   , "console"
+  -- , "control"
+  , "exceptions"
+  , "partial"
+  , "tuples"
+  , "unsafe-coerce"
   ]
 , packages = packages_dev
 }

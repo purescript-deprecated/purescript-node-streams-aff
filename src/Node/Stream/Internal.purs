@@ -1,4 +1,4 @@
-module Node.Stream.Internal
+module Node.Stream.Aff.Internal
   ( onceReadable
   , readableEnded
   )

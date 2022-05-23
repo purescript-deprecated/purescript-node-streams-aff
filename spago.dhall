@@ -22,7 +22,7 @@ to generate this file without the comments in this block.
     , "either"
     , "maybe"
     , "prelude"
-    , "tailrec"
+    -- , "tailrec"
     ]
 , packages = ./packages.dhall
 , sources = [ "src/**/*.purs" ]

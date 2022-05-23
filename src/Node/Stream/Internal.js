@@ -6,6 +6,6 @@ export function onceReadable(s) {
 
 export function readableEnded(s) {
 	return () => {
-		return s.readableEnded;
+		return s.readableEndedxxx;
 	};
 }
