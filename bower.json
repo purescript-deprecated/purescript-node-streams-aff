@@ -1,0 +1,28 @@
+{
+    "name": "purescript-node-streams-aff",
+    "license": [
+        "MIT"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/jamesdbrock/purescript-node-streams-aff.git"
+    },
+    "ignore": [
+        "**/.*",
+        "node_modules",
+        "bower_components",
+        "output"
+    ],
+    "dependencies": {
+        "purescript-aff": "^v7.0.0",
+        "purescript-arrays": "^v7.0.0",
+        "purescript-effect": "^v4.0.0",
+        "purescript-either": "^v6.0.0",
+        "purescript-exceptions": "^v6.0.0",
+        "purescript-maybe": "^v6.0.0",
+        "purescript-node-buffer": "^v8.0.0",
+        "purescript-node-streams": "^v7.0.0",
+        "purescript-prelude": "^v6.0.0",
+        "purescript-st": "^v6.0.0"
+    }
+}
