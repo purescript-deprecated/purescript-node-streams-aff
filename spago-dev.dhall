@@ -39,8 +39,9 @@ conf //
   -- , "control"
   , "exceptions"
   , "partial"
-  , "tuples"
-  , "unsafe-coerce"
+  -- , "tuples"
+  -- , "unsafe-coerce"
+  , "web-encoding"
   ]
 , packages = packages_dev
 }

@@ -1,21 +1,35 @@
 module Node.Stream.Aff.Internal
   ( onceReadable
-  , readableEnded
+  , onceEnd
+  , onceDrain
   )
 where
 
 import Prelude
 
 import Effect (Effect)
-import Node.Stream (Readable)
+import Node.Stream (Readable, Writable)
 
 -- | Listen for one `readable` event, call the callback, then detach
 -- | the `readable` event listener.
 foreign import onceReadable
-  :: forall w
-   . Readable w
+  :: forall r
+   . Readable r
   -> Effect Unit
   -> Effect Unit
 
--- | Test if the `Readable` stream has reached its end.
-foreign import readableEnded :: forall w. Readable w -> Effect Boolean
+-- | Listen for one `end` event, call the callback, then detach
+-- | the `end` event listener.
+foreign import onceEnd
+  :: forall r
+   . Readable r
+  -> Effect Unit
+  -> Effect Unit
+
+-- | Listen for one `drain` event, call the callback, then detach
+-- | the `drain` event listener.
+foreign import onceDrain
+  :: forall w
+   . Writable w
+  -> Effect Unit
+  -> Effect Unit

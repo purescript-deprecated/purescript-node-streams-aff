@@ -1,11 +1,17 @@
 export function onceReadable(s) {
   return f => () => {
-    s.once("readable", f);
+    s.once('readable', f);
   };
 }
 
-export function readableEnded(s) {
-	return () => {
-		return s.readableEndedxxx;
+export function onceEnd(s) {
+	return f => () => {
+		s.once('end', f);
+	};
+}
+
+export function onceDrain(s) {
+	return f => () => {
+		s.once('drain', f);
 	};
 }

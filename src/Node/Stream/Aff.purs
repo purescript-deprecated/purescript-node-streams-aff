@@ -42,7 +42,25 @@
 -- | this `Aff` is cancelled. For example, to destroy the stream
 -- | in the event that the `Aff` is cancelled pass `Node.Stream.destroy`
 -- | as the canceller.
-
+-- |
+-- | #### EOF
+-- |
+-- | There doesn’t seem to be any way to reliably detect when a stream has reached
+-- | its end. If any one of these reading functions is called on a stream
+-- | which has reached its end, then it will never return.
+-- |
+-- | ## Writing
+-- |
+-- | The writing functions in this module all operate on a `Writeable` stream.
+-- |
+-- | The writing functions will finish after the data is flushed.
+-- |
+-- | #### Canceller argument
+-- |
+-- | The writing functions suffixed with underscore take a canceller argument.
+-- |
+-- | The canceller argument is an action to perform in the event that
+-- | this `Aff` is cancelled.
 module Node.Stream.Aff
   ( readSome
   , readSome_
@@ -50,6 +68,8 @@ module Node.Stream.Aff
   , readAll_
   , readN
   , readN_
+  , write
+  , write_
   )
 
 where
@@ -67,16 +87,15 @@ import Control.Monad.ST.Ref as STRef
 import Data.Array.ST as Array.ST
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
-import Data.Tuple (Tuple(..))
 import Effect (Effect, untilE)
 import Effect.Aff (effectCanceler, makeAff)
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Exception (catchException)
 import Node.Buffer (Buffer)
 import Node.Buffer as Buffer
-import Node.Stream (Readable)
+import Node.Stream (Readable, Writable)
 import Node.Stream as Stream
-import Node.Stream.Aff.Internal (onceReadable, readableEnded)
+import Node.Stream.Aff.Internal (onceDrain, onceEnd, onceReadable)
 
 
 -- | Wait until there is some data available from the stream.
@@ -84,7 +103,7 @@ readSome
   :: forall m r
    . MonadAff m
   => Readable r
-  -> m (Tuple (Array Buffer) Boolean)
+  -> m (Array Buffer)
 readSome r = readSome_ r (\_ -> pure unit)
 
 
@@ -94,14 +113,13 @@ readSome_
    . MonadAff m
   => Readable r
   -> (Readable r -> Effect Unit)
-  -> m (Tuple (Array Buffer) Boolean)
+  -> m (Array Buffer)
 readSome_ r canceller = liftAff <<< makeAff $ \res -> do
 
   onceReadable r do
     catchException (res <<< Left) do
       bufs <- liftST $ Array.ST.new
       untilE do
-      -- flip tailRecM unit \_ -> do
         Stream.read r Nothing >>= case _ of
           -- “The 'readable' event will also be emitted once the end of the
           -- stream data has been reached but before the 'end' event is emitted.”
@@ -109,9 +127,8 @@ readSome_ r canceller = liftAff <<< makeAff $ \res -> do
           Just chunk -> do
             void $ liftST $ Array.ST.push chunk bufs
             pure false
-      ended <- readableEnded r
       ret <- liftST $ Array.ST.unsafeFreeze bufs
-      res $ Right (Tuple ret ended)
+      res $ Right ret
 
   pure $ effectCanceler (canceller r)
 
@@ -122,48 +139,39 @@ readSome_ r canceller = liftAff <<< makeAff $ \res -> do
 -- | for this stream.
 readAll
   :: forall m r
-  . MonadAff m
+   . MonadAff m
   => Readable r
-  -> m (Tuple (Array Buffer) Boolean)
+  -> m (Array Buffer)
 readAll r = readAll_ r (\_ -> pure unit)
 
 
 -- | __readAll__ with a canceller argument.
 readAll_
   :: forall m r
-  . MonadAff m
+   . MonadAff m
   => Readable r
   -> (Readable r -> Effect Unit)
-  -> m (Tuple (Array Buffer) Boolean)
+  -> m (Array Buffer)
 readAll_ r canceller = liftAff <<< makeAff $ \res -> do
   bufs <- liftST $ Array.ST.new
 
-  let
-    -- stepRead _ = do
-    --   Stream.read r Nothing >>= case _ of
-    --     Nothing -> pure $ Done unit
-    --     Just chunk -> do
-    --       _ <- liftST $ Array.ST.push chunk bufs
-    --       pure $ Loop unit
+  onceEnd r do
+    ret <- liftST $ Array.ST.unsafeFreeze bufs
+    res $ Right ret
 
+  let
     oneRead = do
       onceReadable r do
         -- “The 'readable' event will also be emitted once the end of the
         -- stream data has been reached but before the 'end' event is emitted.”
         catchException (res <<< Left) do
-          -- tailRecM stepRead unit
           untilE do
             Stream.read r Nothing >>= case _ of
               Nothing -> pure true
               Just chunk -> do
                 _ <- liftST $ Array.ST.push chunk bufs
                 pure false
-          ended <- readableEnded r
-          if ended then do
-            ret <- liftST $ Array.ST.unsafeFreeze bufs
-            res $ Right (Tuple ret ended)
-          else
-            oneRead -- this is not recursion
+          oneRead -- this is not recursion
 
   oneRead
   pure $ effectCanceler (canceller r)
@@ -176,44 +184,34 @@ readAll_ r canceller = liftAff <<< makeAff $ \res -> do
 -- |
 -- | If the end of the stream is reached then returns all bytes read so far
 -- | and the `Boolean` return value `true`.
+-- |
+-- | Note: if there are 10 bytes in the stream, and we `readN s 10`, then
+-- | the end flag Boolean will be ? in the result?
 readN
   :: forall m r
    . MonadAff m
-   => Readable r
-   -> Int
-   -> m (Tuple (Array Buffer) Boolean)
+  => Readable r
+  -> Int
+  -> m (Array Buffer)
 readN r n = readN_ r (\_ -> pure unit) n
 
 -- | __readN__ with a canceller argument.
 readN_
   :: forall m r
    . MonadAff m
-   => Readable r
-   -> (Readable r -> Effect Unit)
-   -> Int
-   -> m (Tuple (Array Buffer) Boolean)
+  => Readable r
+  -> (Readable r -> Effect Unit)
+  -> Int
+  -> m (Array Buffer)
 readN_ r canceller n = liftAff <<< makeAff $ \res -> do
   red <- liftST $ STRef.new 0
   bufs <- liftST $ Array.ST.new
 
-  let
-    -- stepRead _ = do
-    --   want <- map (n-_) $ liftST $ STRef.read red
-    --   -- https://nodejs.org/docs/latest-v15.x/api/stream.html#stream_readable_read_size
-    --   -- “If size bytes are not available to be read, null will be returned
-    --   -- unless the stream has ended, in which case all of the data remaining
-    --   -- in the internal buffer will be returned.”
-    --   Stream.read r (Just want) >>= case _ of
-    --     Nothing -> pure $ Done unit
-    --     Just chunk -> do
-    --       _ <- liftST $ Array.ST.push chunk bufs
-    --       s <- Buffer.size chunk
-    --       red' <- liftST $ STRef.modify (_+s) red
-    --       if red' >= n then
-    --         pure $ Done unit
-    --       else
-    --         pure $ Loop unit
+  onceEnd r do
+    ret <- liftST $ Array.ST.unsafeFreeze bufs
+    res $ Right ret
 
+  let
     oneRead = do
       onceReadable r do
         catchException (res <<< Left) do
@@ -234,12 +232,56 @@ readN_ r canceller n = liftAff <<< makeAff $ \res -> do
                 else
                   pure false
           m <- liftST $ STRef.read red
-          ended <- readableEnded r
-          if m >= n || ended then do
+          if m >= n then do
             ret <- liftST $ Array.ST.unsafeFreeze bufs
-            res $ Right (Tuple ret ended)
+            res $ Right ret
           else
             oneRead -- this is not recursion
 
   oneRead
   pure $ effectCanceler (canceller r)
+
+
+-- | Write to a stream. Will finish after the data is flushed to the stream.
+write
+  :: forall m w
+   . MonadAff m
+  => Writable w
+  -> Array Buffer
+  -> m Unit
+write w bs = write_ w (\_ -> pure unit) bs
+
+-- | __write__ with a canceller argument.
+write_
+  :: forall m w
+   . MonadAff m
+  => Writable w
+  -> (Writable w -> Effect Unit)
+  -> Array Buffer
+  -> m Unit
+write_ w canceller bs = liftAff <<< makeAff $ \res -> do
+  bufs <- liftST $ Array.ST.thaw bs
+
+  let
+    callback = case _ of
+      Just err -> res $ Left err
+      Nothing -> res $ Right unit
+
+    oneWrite = do
+      catchException (res <<< Left) do
+        untilE do
+          chunkMay <- liftST $ Array.ST.shift bufs
+          case chunkMay of
+            Nothing -> do
+              pure true
+            Just chunk -> do
+              backpressure <- Stream.write w chunk callback
+              if backpressure then do
+                pure false
+              else do
+                -- TODO there is a race condition, what if we miss the drain event?
+                onceDrain w oneWrite
+                pure true
+
+  oneWrite
+  pure $ effectCanceler (canceller w)
