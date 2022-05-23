@@ -1,12 +1,4 @@
 
-# purescript-node-streams-aff
+# node-streams-aff
 
-WIP
-
-Asynchronous API for *Node.js* `stream` API.
-
-https://nodejs.org/docs/latest-v14.x/api/stream.html
-
-Requires *Node.js* ≥  ?
-
-v12.9.0 readableEnded
+Asynchronous PureScript API for the [*Node.js* `stream` API](https://nodejs.org/docs/latest/api/stream.html).

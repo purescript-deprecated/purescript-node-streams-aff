@@ -18,7 +18,6 @@ conf //
   , "node-process"
   , "node-fs"
   , "console"
-  , "exceptions"
   , "partial"
   ]
 , packages = packages_dev

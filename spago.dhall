@@ -14,6 +14,7 @@ to generate this file without the comments in this block.
 , dependencies =
     [ "aff"
     , "effect"
+    , "exceptions"
     , "node-buffer"
     , "node-streams"
     , "st"
