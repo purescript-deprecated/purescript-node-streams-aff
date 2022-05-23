@@ -43,8 +43,8 @@
 -- | #### EOF
 -- |
 -- | There doesn’t seem to be any way to reliably detect when a stream has reached
--- | its end. If any one of these reading functions is called on a stream
--- | which has reached its end, then it will never return.
+-- | its end? If any one of these reading functions is called on a stream
+-- | which has already reached its end, then the reading function will never complete.
 -- |
 -- | ## Writing
 -- |
@@ -52,11 +52,13 @@
 -- |
 -- | The writing functions in this module all operate on a `Writeable` stream.
 -- |
--- | Internally the writing functions use the
+-- | Internally the writing functions will call the
 -- | [`writable.write(chunk[, encoding][, callback])`](https://nodejs.org/docs/latest/api/stream.html#writablewritechunk-encoding-callback)
--- | function.
+-- | function on each of the `Buffer`s,
+-- | asychronously waiting if there is backpressure from the stream.
 -- |
--- | The writing functions will finish after the data is flushed.
+-- | The writing functions will complete after the data is flushed to the
+-- | stream.
 -- |
 -- | #### Canceller argument
 -- |
@@ -133,7 +135,7 @@ readSome_ r canceller = liftAff <<< makeAff $ \res -> do
   pure $ effectCanceler (canceller r)
 
 
--- | Read all data until the end of a stream.
+-- | Read all data until the end of the stream. Note that `stdin` will never end.
 readAll
   :: forall m r
    . MonadAff m
@@ -179,7 +181,7 @@ readAll_ r canceller = liftAff <<< makeAff $ \res -> do
 -- | Wait for *N* bytes to become available from the stream.
 -- |
 -- | If more than *N* bytes are available on the stream, then
--- | only returns *N* bytes and leaves the rest in the internal buffer.
+-- | only returns *N* bytes and leaves the rest in the stream’s internal buffer.
 readN
   :: forall m r
    . MonadAff m
@@ -197,7 +199,7 @@ readN_
   -> Int
   -> m (Array Buffer)
 readN_ r canceller n = liftAff <<< makeAff $ \res -> do
-  red <- liftST $ STRef.new 0
+  redRef <- liftST $ STRef.new 0
   bufs <- liftST $ Array.ST.new
 
   onceError r $ res <<< Left
@@ -211,23 +213,23 @@ readN_ r canceller n = liftAff <<< makeAff $ \res -> do
       onceReadable r do
         catchException (res <<< Left) do
           untilE do
-            want <- map (n-_) $ liftST $ STRef.read red
+            red <- liftST $ STRef.read redRef
             -- https://nodejs.org/docs/latest-v15.x/api/stream.html#stream_readable_read_size
             -- “If size bytes are not available to be read, null will be returned
             -- unless the stream has ended, in which case all of the data remaining
             -- in the internal buffer will be returned.”
-            Stream.read r (Just want) >>= case _ of
+            Stream.read r (Just (n-red)) >>= case _ of
               Nothing -> pure true
               Just chunk -> do
                 _ <- liftST $ Array.ST.push chunk bufs
                 s <- Buffer.size chunk
-                red' <- liftST $ STRef.modify (_+s) red
+                red' <- liftST $ STRef.modify (_+s) redRef
                 if red' >= n then
                   pure true
                 else
                   pure false
-          m <- liftST $ STRef.read red
-          if m >= n then do
+          red <- liftST $ STRef.read redRef
+          if red >= n then do
             ret <- liftST $ Array.ST.unsafeFreeze bufs
             res $ Right ret
           else
@@ -237,7 +239,7 @@ readN_ r canceller n = liftAff <<< makeAff $ \res -> do
   pure $ effectCanceler (canceller r)
 
 
--- | Write to a stream. Will finish after the data is flushed to the stream.
+-- | Write to a stream. Will complete after the data is flushed to the stream.
 write
   :: forall m w
    . MonadAff m
@@ -281,7 +283,6 @@ write_ w canceller bs = liftAff <<< makeAff $ \res -> do
               if nobackpressure then do
                 pure false
               else do
-                -- TODO there is a race condition, what if we miss the drain event?
                 onceDrain w oneWrite
                 pure true
 
