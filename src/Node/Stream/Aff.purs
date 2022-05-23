@@ -31,9 +31,6 @@
 -- |     <- liftEffect $ Array.foldM (\a b -> (a+_) <$> size b) 0 inputs
 -- | ```
 -- |
--- | Each reading function also returns a `Boolean` flag which is `true`
--- | if the end of the stream was reached.
--- |
 -- | #### Canceller argument
 -- |
 -- | The reading functions suffixed with underscore take a canceller argument.
@@ -51,7 +48,13 @@
 -- |
 -- | ## Writing
 -- |
+-- | #### Implementation
+-- |
 -- | The writing functions in this module all operate on a `Writeable` stream.
+-- |
+-- | Internally the writing functions use the
+-- | [`writable.write(chunk[, encoding][, callback])`](https://nodejs.org/docs/latest/api/stream.html#writablewritechunk-encoding-callback)
+-- | function.
 -- |
 -- | The writing functions will finish after the data is flushed.
 -- |
@@ -176,13 +179,7 @@ readAll_ r canceller = liftAff <<< makeAff $ \res -> do
 -- | Wait for *N* bytes to become available from the stream.
 -- |
 -- | If more than *N* bytes are available on the stream, then
--- | only return *N* bytes and leave the rest in the internal buffer.
--- |
--- | If the end of the stream is reached then returns all bytes read so far
--- | and the `Boolean` return value `true`.
--- |
--- | Note: if there are 10 bytes in the stream, and we `readN s 10`, then
--- | the end flag Boolean will be ? in the result?
+-- | only returns *N* bytes and leaves the rest in the internal buffer.
 readN
   :: forall m r
    . MonadAff m
