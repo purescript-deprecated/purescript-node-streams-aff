@@ -15,3 +15,9 @@ export function onceDrain(s) {
 		s.once('drain', f);
 	};
 }
+
+export function onceError(s) {
+	return f => () => {
+		s.once('error', f);
+	};
+}

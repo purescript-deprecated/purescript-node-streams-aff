@@ -2,13 +2,15 @@ module Node.Stream.Aff.Internal
   ( onceReadable
   , onceEnd
   , onceDrain
+  , onceError
   )
 where
 
 import Prelude
 
 import Effect (Effect)
-import Node.Stream (Readable, Writable)
+import Effect.Exception (Error)
+import Node.Stream (Readable, Stream, Writable)
 
 -- | Listen for one `readable` event, call the callback, then detach
 -- | the `readable` event listener.
@@ -32,4 +34,10 @@ foreign import onceDrain
   :: forall w
    . Writable w
   -> Effect Unit
+  -> Effect Unit
+
+foreign import onceError
+  :: forall r
+   . Stream r
+  -> (Error -> Effect Unit)
   -> Effect Unit

@@ -74,16 +74,11 @@ module Node.Stream.Aff
 
 where
 
--- questions:
---
--- cancellation?
--- launchAff_ will wait for writes to end?
--- writes will be flushed?
-
 import Prelude
 
 import Control.Monad.ST.Class (liftST)
 import Control.Monad.ST.Ref as STRef
+import Data.Array as Array
 import Data.Array.ST as Array.ST
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
@@ -95,7 +90,7 @@ import Node.Buffer (Buffer)
 import Node.Buffer as Buffer
 import Node.Stream (Readable, Writable)
 import Node.Stream as Stream
-import Node.Stream.Aff.Internal (onceDrain, onceEnd, onceReadable)
+import Node.Stream.Aff.Internal (onceDrain, onceEnd, onceError, onceReadable)
 
 
 -- | Wait until there is some data available from the stream.
@@ -116,6 +111,8 @@ readSome_
   -> m (Array Buffer)
 readSome_ r canceller = liftAff <<< makeAff $ \res -> do
 
+  onceError r $ res <<< Left
+
   onceReadable r do
     catchException (res <<< Left) do
       bufs <- liftST $ Array.ST.new
@@ -134,9 +131,6 @@ readSome_ r canceller = liftAff <<< makeAff $ \res -> do
 
 
 -- | Read all data until the end of a stream.
--- |
--- | After this action finishes, `readableEnded` will be `true`
--- | for this stream.
 readAll
   :: forall m r
    . MonadAff m
@@ -154,6 +148,8 @@ readAll_
   -> m (Array Buffer)
 readAll_ r canceller = liftAff <<< makeAff $ \res -> do
   bufs <- liftST $ Array.ST.new
+
+  onceError r $ res <<< Left
 
   onceEnd r do
     ret <- liftST $ Array.ST.unsafeFreeze bufs
@@ -206,6 +202,8 @@ readN_
 readN_ r canceller n = liftAff <<< makeAff $ \res -> do
   red <- liftST $ STRef.new 0
   bufs <- liftST $ Array.ST.new
+
+  onceError r $ res <<< Left
 
   onceEnd r do
     ret <- liftST $ Array.ST.unsafeFreeze bufs
@@ -262,8 +260,14 @@ write_
 write_ w canceller bs = liftAff <<< makeAff $ \res -> do
   bufs <- liftST $ Array.ST.thaw bs
 
+  onceError w $ res <<< Left
+
   let
     callback = case _ of
+      Just err -> res $ Left err
+      Nothing -> pure unit
+
+    callbackLast = case _ of
       Just err -> res $ Left err
       Nothing -> res $ Right unit
 
@@ -275,8 +279,9 @@ write_ w canceller bs = liftAff <<< makeAff $ \res -> do
             Nothing -> do
               pure true
             Just chunk -> do
-              backpressure <- Stream.write w chunk callback
-              if backpressure then do
+              isLast <- liftST $ (_==0) <$> Array.length <$> Array.ST.unsafeFreeze bufs
+              nobackpressure <- Stream.write w chunk (if isLast then callbackLast else callback)
+              if nobackpressure then do
                 pure false
               else do
                 -- TODO there is a race condition, what if we miss the drain event?

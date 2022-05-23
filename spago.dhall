@@ -15,14 +15,12 @@ to generate this file without the comments in this block.
     [ "aff"
     , "effect"
     , "node-buffer"
-    -- , "node-process"
     , "node-streams"
     , "st"
     , "arrays"
     , "either"
     , "maybe"
     , "prelude"
-    -- , "tailrec"
     ]
 , packages = ./packages.dhall
 , sources = [ "src/**/*.purs" ]
