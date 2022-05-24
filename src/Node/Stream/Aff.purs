@@ -1,5 +1,11 @@
 -- | Asynchronous I/O with *Node.js* streams.
 -- |
+-- | Open file streams with
+-- | [__Node.FS.Stream__](https://pursuit.purescript.org/packages/purescript-node-fs/docs/Node.FS.Stream).
+-- |
+-- | Open process streams with
+-- | [__Node.Process__](https://pursuit.purescript.org/packages/purescript-node-process/docs/Node.Process).
+-- |
 -- | ## Reading
 -- |
 -- | #### Implementation
@@ -101,9 +107,10 @@ import Node.Stream.Aff.Internal (onceDrain, onceEnd, onceError, onceReadable)
 -- | Wait until there is some data available from the stream.
 -- |
 -- | This function is not currently very useful because there is no way to
--- | know when the stream has reached its end, and if this
+-- | know when a stream has already reached its end, and if this
 -- | function is called after the stream has ended then the call will
--- | never complete.
+-- | never complete. So we can `readSome` one time and it will complete, but
+-- | then we don’t know if the next call to `readSome` will complete.
 readSome
   :: forall m r
    . MonadAff m
