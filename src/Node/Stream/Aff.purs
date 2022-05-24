@@ -99,6 +99,11 @@ import Node.Stream.Aff.Internal (onceDrain, onceEnd, onceError, onceReadable)
 
 
 -- | Wait until there is some data available from the stream.
+-- |
+-- | This function is not currently very useful because there is no way to
+-- | know when the stream has reached its end, and if this
+-- | function is called after the stream has ended then the call will
+-- | never complete.
 readSome
   :: forall m r
    . MonadAff m
@@ -181,7 +186,10 @@ readAll_ r canceller = liftAff <<< makeAff $ \res -> do
 -- | Wait for *N* bytes to become available from the stream.
 -- |
 -- | If more than *N* bytes are available on the stream, then
--- | only returns *N* bytes and leaves the rest in the stream’s internal buffer.
+-- | completes with *N* bytes and leaves the rest in the stream’s internal buffer.
+-- |
+-- | If the end of the stream is reached before *N* bytes are available,
+-- | then completes with less than *N* bytes.
 readN
   :: forall m r
    . MonadAff m
@@ -204,6 +212,8 @@ readN_ r canceller n = liftAff <<< makeAff $ \res -> do
 
   onceError r $ res <<< Left
 
+  -- The `end` event is sometimes raised after we have read N bytes, even
+  -- if there are more bytes in the stream?
   onceEnd r do
     ret <- liftST $ Array.ST.unsafeFreeze bufs
     res $ Right ret

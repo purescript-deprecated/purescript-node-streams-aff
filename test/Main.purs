@@ -1,8 +1,10 @@
 -- | How to test:
+-- |
 -- | ```
 -- | spago -x spago-dev.dhall test --exec-args <(head --bytes 1000000 /dev/zero)
 -- | ```
 -- |
+-- | We want to read from a file, not stdin, because stdin has no EOF.
 module Test.Main where
 
 import Prelude
@@ -27,8 +29,6 @@ import Test.Spec.Runner (runSpec)
 
 main :: Effect Unit
 main = unsafePartial $ do
-  -- We want to read from a file, not stdin, because stdin has no EOF.
-  -- But we currently have no way to detect EOF.
   runAff_ (either (show >>> Console.log) (\_ -> pure unit)) $ runSpec [consoleReporter] do
     describe "Node.Stream.Aff" do
       it "reads 1" do
@@ -38,10 +38,11 @@ main = unsafePartial $ do
         shouldEqual 500000 bytesRead1
         inputs2 <- readSome infile
         inputs3 <- readAll infile
-        -- TODO read after EOF hangs
+        let inputs = inputs1 <> inputs2 <> inputs3
+        -- TODO read after EOF will hang
         -- inputs4 <- readAll infile
         -- inputs4 <- readSome infile
-        let inputs = inputs1 <> inputs2 <> inputs3
+        -- inputs4 <- readN infile 10
         -- let inputs = inputs1 <> inputs2 <> inputs3 <> inputs4
         bytesRead :: Int
             <- liftEffect $ Array.foldM (\a b -> (a+_) <$> Buffer.size b) 0 inputs
