@@ -19,6 +19,7 @@ conf //
   , "node-fs"
   , "console"
   , "partial"
+  , "unsafe-coerce"
   ]
 , packages = packages_dev
 }

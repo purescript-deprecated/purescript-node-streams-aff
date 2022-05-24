@@ -3,6 +3,7 @@ module Node.Stream.Aff.Internal
   , onceEnd
   , onceDrain
   , onceError
+  , unbuffer
   )
 where
 
@@ -41,3 +42,14 @@ foreign import onceError
    . Stream r
   -> (Error -> Effect Unit)
   -> Effect Unit
+
+-- | Issue:
+-- | https://github.com/nodejs/node/issues/6379
+-- |
+-- | Implementation:
+-- | https://github.com/nodejs/node/issues/6456
+foreign import unbuffer
+  :: forall w
+   . Writable w
+  -> Effect Unit
+-- foreign import stdoutUnbuffer :: Effect Unit

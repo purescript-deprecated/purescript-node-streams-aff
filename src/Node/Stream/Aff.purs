@@ -81,6 +81,7 @@ module Node.Stream.Aff
   , readN_
   , write
   , write_
+  , module Reexport
   )
 
 where
@@ -102,6 +103,7 @@ import Node.Buffer as Buffer
 import Node.Stream (Readable, Writable)
 import Node.Stream as Stream
 import Node.Stream.Aff.Internal (onceDrain, onceEnd, onceError, onceReadable)
+import Node.Stream.Aff.Internal (unbuffer) as Reexport
 
 
 -- | Wait until there is some data available from the stream.
