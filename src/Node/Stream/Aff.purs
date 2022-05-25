@@ -73,17 +73,14 @@
 -- | The canceller argument is an action to perform in the event that
 -- | this `Aff` is cancelled.
 module Node.Stream.Aff
-  ( module Reexport
-  , readAll
+  ( readAll
   , readAll_
   , readN
   , readN_
   , readSome
   , readSome_
   , write
-  , write'
   , write_
-  , noExit
   )
   where
 
@@ -101,28 +98,28 @@ import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Exception (catchException)
 import Node.Buffer (Buffer)
 import Node.Buffer as Buffer
-import Node.Encoding (Encoding(..))
 import Node.Stream (Readable, Writable)
 import Node.Stream as Stream
-import Node.Stream.Aff.Internal (clearInterval, hasRef, onceReadable, setInterval)
 import Node.Stream.Aff.Internal (onceDrain, onceEnd, onceError, onceReadable)
-import Node.Stream.Aff.Internal (unbuffer) as Reexport
 
 
--- | Wait until there is some data available from the stream.
+-- | Wait until there is some data available from the stream, then read it.
 -- |
--- | This function is not currently very useful because there is no way to
--- | know when a stream has already reached its end, and if this
+-- | This function is useful for streams like __stdin__ which never
+-- | reach End-Of-File.
+-- |
+-- | There is no way (?) to reliably detect with *Node.js*
+-- | when a stream has already reached its end, and if this
 -- | function is called after the stream has ended then the call will
 -- | never complete. So we can `readSome` one time and it will complete, but
--- | then we don’t know if the next call to `readSome` will complete.
+-- | if the stream reached its end then the next call to `readSome`
+-- | will never complete.
 readSome
   :: forall m r
    . MonadAff m
   => Readable r
   -> m (Array Buffer)
 readSome r = readSome_ r (\_ -> pure unit)
-
 
 -- | __readSome__ with a canceller argument.
 readSome_
@@ -177,7 +174,6 @@ readAll
   => Readable r
   -> m (Array Buffer)
 readAll r = readAll_ r (\_ -> pure unit)
-
 
 -- | __readAll__ with a canceller argument.
 readAll_
@@ -311,43 +307,6 @@ readN_ r canceller n = liftAff <<< makeAff $ \res -> do
         tryToRead waitToRead
   waitToRead unit
 
-  -- fix \waitToRead -> do
-  --   void $ onceReadable r do
-  --     tryToRead waitToRead
-  -- let
-  --   waitToRead = do
-  --     void $ onceReadable r do
-  --       tryToRead waitToRead -- this is not recursion
-
-
-  -- let
-  --   oneRead = do
-  --     void $ onceReadable r do
-  --       catchException cleanupRethrow do
-  --         untilE do
-  --           red <- liftST $ STRef.read redRef
-  --           -- https://nodejs.org/docs/latest-v15.x/api/stream.html#stream_readable_read_size
-  --           -- “If size bytes are not available to be read, null will be returned
-  --           -- unless the stream has ended, in which case all of the data remaining
-  --           -- in the internal buffer will be returned.”
-  --           Stream.read r (Just (n-red)) >>= case _ of
-  --             Nothing -> pure true
-  --             Just chunk -> do
-  --               _ <- liftST $ Array.ST.push chunk bufs
-  --               s <- Buffer.size chunk
-  --               red' <- liftST $ STRef.modify (_+s) redRef
-  --               if red' >= n then
-  --                 pure true
-  --               else
-  --                 pure false
-  --         red <- liftST $ STRef.read redRef
-  --         if red >= n then do
-  --           ret <- liftST $ Array.ST.unsafeFreeze bufs
-  --           res $ Right ret
-  --         else
-  --           oneRead -- this is not recursion
-
-  -- waitToRead
   pure $ effectCanceler (canceller r)
 
 
@@ -401,41 +360,3 @@ write_ w canceller bs = liftAff <<< makeAff $ \res -> do
   oneWrite
   removeError
   pure $ effectCanceler (canceller w)
-
-
--- TODO Remove all listeners before returning
--- https://nodejs.org/api/events.html#emitterremovelistenereventname-listener
---
--- (node:483527) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 end listeners added to [Socket]. Use emitter.setMaxListeners() to increase limit
--- (Use `node --trace-warnings ...` to show where the warning was created)
---
--- Buffer.size 28
---
--- (node:483527) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 error listeners added to [Socket]. Use emitter.setMaxListeners() to increase limit
-
-
-
--- | https://github.com/purescript-contrib/pulp/blob/79dd954c86a5adc57051cad127c8888756f680a6/src/Pulp/System/Stream.purs#L41
-write' :: forall m w. MonadAff m => Writable w -> String -> m Unit
-write' stream str = liftAff $ makeAff (\cb -> mempty <* void (Stream.writeString stream UTF8 str (\_ -> cb (Right unit))))
-
-
--- | Prevent Node.js from exiting while an `Effect` is running.
-noExit :: Effect (Effect Unit)
--- noExit :: forall a. (Effect unit -> Effect a) -> Effect a
-noExit = do
-  -- Idea from
-  -- https://stackoverflow.com/a/62869265/187223
-
-  id <- setInterval 1000 (pure unit)
-  pure (clearInterval id)
-
-  -- id <- setInterval 1 (Console.log "INTERVAL\n")
-  -- h <- hasRef id
-  -- Console.log $ "TIMEOUT " <> show h
-  -- pure do
-  --   Console.log "INTERVAL END\n"
-  --   clearInterval id
-
-  -- id <- setTimeout 1 do
-  --   Console.log "TIMEOUT\n"

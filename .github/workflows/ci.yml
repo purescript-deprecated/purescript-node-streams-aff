@@ -35,7 +35,7 @@ jobs:
         run: spago -x spago-dev.dhall install
 
       - name: Run tests
-        run: spago -x spago-dev.dhall test --no-install --exec-args <(head --bytes 1000000 /dev/zero)
+        run: spago -x spago-dev.dhall test --no-install
 
       # - name: Check formatting
       #   run: purs-tidy check src test

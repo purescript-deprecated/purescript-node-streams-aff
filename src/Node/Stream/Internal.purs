@@ -1,13 +1,8 @@
 module Node.Stream.Aff.Internal
-  ( Timeout
-  , clearInterval
-  , hasRef
-  , onceDrain
+  ( onceDrain
   , onceEnd
   , onceError
   , onceReadable
-  , setInterval
-  , unbuffer
   )
   where
 
@@ -60,25 +55,3 @@ foreign import onceError
    . Stream r
   -> (Error -> Effect Unit)
   -> Effect (Effect Unit)
-
--- | Issue:
--- | https://github.com/nodejs/node/issues/6379
--- |
--- | Implementation:
--- | https://github.com/nodejs/node/issues/6456
--- |
--- | If this fails then it will throw an `Error`.
-foreign import unbuffer
-  :: forall w
-   . Writable w
-  -> Effect Unit
--- foreign import stdoutUnbuffer :: Effect Unit
-
--- | https://nodejs.org/api/timers.html#class-timeout
-foreign import data Timeout :: Type
-
-foreign import setInterval :: Int -> Effect Unit -> Effect Timeout
-
-foreign import clearInterval :: Timeout -> Effect Unit
-
-foreign import hasRef :: Timeout -> Effect Boolean
