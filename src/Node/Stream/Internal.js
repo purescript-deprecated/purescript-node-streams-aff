@@ -27,3 +27,9 @@ export function onceError(s) {
     return () => {s.removeListener('error', f);};
   };
 }
+
+export function readable(s) {
+  return () => {
+    return s.readable;
+  }
+}

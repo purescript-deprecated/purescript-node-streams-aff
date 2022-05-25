@@ -6,6 +6,9 @@
 -- | Open process streams with
 -- | [__Node.Process__](https://pursuit.purescript.org/packages/purescript-node-process/docs/Node.Process).
 -- |
+-- | All I/O errors will be thrown through the `Aff` `MonadError` class
+-- | instance.
+-- |
 -- | ## Reading
 -- |
 -- | #### Implementation
@@ -21,21 +24,28 @@
 -- | #### Results
 -- |
 -- | The result of a reading function may be chunked into more than one `Buffer`.
+-- | The `fst` element of the result `Tuple` is an `Array Buffer` of what
+-- | was read.
 -- | To concatenate the result into a single `Buffer`, use
 -- | `Node.Buffer.concat :: Array Buffer -> Buffer`.
 -- |
 -- | ```
--- | input :: Buffer <- liftEffect <<< concat =<< readSome stdin
+-- | input :: Buffer <- liftEffect <<< concat <<< fst =<< readSome stdin
 -- | ```
 -- |
 -- | To calculate the number of bytes read, use
 -- | `Node.Buffer.size :: Buffer -> m Int`.
 -- |
 -- | ```
--- | inputs :: Array Buffer <- readSome stdin
+-- | Tuple inputs _ :: Array Buffer <- readSome stdin
 -- | bytesRead :: Int
 -- |     <- liftEffect $ Array.foldM (\a b -> (a+_) <$> size b) 0 inputs
 -- | ```
+-- |
+-- | The `snd` element of the result `Tuple` is a `Boolean` flag which
+-- | is `true` if the stream has not reached End-Of-File (and also if the stream
+-- | has not errored or been destroyed.) If the flag is `false` then
+-- | no more bytes will ever be produced by the stream.
 -- |
 -- | #### Canceller argument
 -- |
@@ -45,12 +55,6 @@
 -- | this `Aff` is cancelled. For example, to destroy the stream
 -- | in the event that the `Aff` is cancelled pass `Node.Stream.destroy`
 -- | as the canceller.
--- |
--- | #### EOF
--- |
--- | There doesn’t seem to be any way to reliably detect when a stream has reached
--- | its end? If any one of these reading functions is called on a stream
--- | which has already reached its end, then the reading function will never complete.
 -- |
 -- | ## Writing
 -- |
@@ -63,7 +67,7 @@
 -- | function on each of the `Buffer`s,
 -- | asychronously waiting if there is backpressure from the stream.
 -- |
--- | The writing functions will complete after the data is flushed to the
+-- | The writing functions will complete after all the data is flushed to the
 -- | stream.
 -- |
 -- | #### Canceller argument
@@ -92,6 +96,7 @@ import Data.Array as Array
 import Data.Array.ST as Array.ST
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
+import Data.Tuple (Tuple(..))
 import Effect (Effect, untilE)
 import Effect.Aff (effectCanceler, makeAff)
 import Effect.Aff.Class (class MonadAff, liftAff)
@@ -100,7 +105,7 @@ import Node.Buffer (Buffer)
 import Node.Buffer as Buffer
 import Node.Stream (Readable, Writable)
 import Node.Stream as Stream
-import Node.Stream.Aff.Internal (onceDrain, onceEnd, onceError, onceReadable)
+import Node.Stream.Aff.Internal (onceDrain, onceEnd, onceError, onceReadable, readable)
 
 
 -- | Wait until there is some data available from the stream, then read it.
@@ -108,17 +113,11 @@ import Node.Stream.Aff.Internal (onceDrain, onceEnd, onceError, onceReadable)
 -- | This function is useful for streams like __stdin__ which never
 -- | reach End-Of-File.
 -- |
--- | There is no way (?) to reliably detect with *Node.js*
--- | when a stream has already reached its end, and if this
--- | function is called after the stream has ended then the call will
--- | never complete. So we can `readSome` one time and it will complete, but
--- | if the stream reached its end then the next call to `readSome`
--- | will never complete.
 readSome
   :: forall m r
    . MonadAff m
   => Readable r
-  -> m (Array Buffer)
+  -> m (Tuple (Array Buffer) Boolean)
 readSome r = readSome_ r (\_ -> pure unit)
 
 -- | __readSome__ with a canceller argument.
@@ -127,7 +126,7 @@ readSome_
    . MonadAff m
   => Readable r
   -> (Readable r -> Effect Unit)
-  -> m (Array Buffer)
+  -> m (Tuple (Array Buffer) Boolean)
 readSome_ r canceller = liftAff <<< makeAff $ \res -> do
   bufs <- liftST $ Array.ST.new
 
@@ -135,18 +134,25 @@ readSome_ r canceller = liftAff <<< makeAff $ \res -> do
 
   -- try to read right away.
   catchException (res <<< Left) do
-    untilE do
-      Stream.read r Nothing >>= case _ of
-        Nothing -> pure true
-        Just chunk -> do
-          void $ liftST $ Array.ST.push chunk bufs
-          pure false
+    ifM (readable r)
+      do
+        untilE do
+          Stream.read r Nothing >>= case _ of
+            Nothing -> pure true
+            Just chunk -> do
+              void $ liftST $ Array.ST.push chunk bufs
+              pure false
+      do
+        removeError
+        res (Right (Tuple [] false))
+
 
   ret1 <- liftST $ Array.ST.unsafeFreeze bufs
   if Array.length ret1 == 0 then do
     -- if we couldn't read anything right away, then wait until the stream is readable.
     -- “The 'readable' event will also be emitted once the end of the
     -- stream data has been reached but before the 'end' event is emitted.”
+    -- We already checked the `readable` property so we don't have to check again.
     void $ onceReadable r do
       catchException (res <<< Left) do
         untilE do
@@ -157,12 +163,14 @@ readSome_ r canceller = liftAff <<< makeAff $ \res -> do
               pure false
         ret2 <- liftST $ Array.ST.unsafeFreeze bufs
         removeError
-        res (Right ret2)
+        readagain <- readable r
+        res (Right (Tuple ret2 readagain))
 
     -- return what we read right away
   else do
     removeError
-    res (Right ret1)
+    readagain <- readable r
+    res (Right (Tuple ret1 readagain))
 
   pure $ effectCanceler (canceller r)
 
@@ -172,7 +180,7 @@ readAll
   :: forall m r
    . MonadAff m
   => Readable r
-  -> m (Array Buffer)
+  -> m (Tuple (Array Buffer) Boolean)
 readAll r = readAll_ r (\_ -> pure unit)
 
 -- | __readAll__ with a canceller argument.
@@ -181,7 +189,7 @@ readAll_
    . MonadAff m
   => Readable r
   -> (Readable r -> Effect Unit)
-  -> m (Array Buffer)
+  -> m (Tuple (Array Buffer) Boolean)
 readAll_ r canceller = liftAff <<< makeAff $ \res -> do
   bufs <- liftST $ Array.ST.new
 
@@ -190,7 +198,7 @@ readAll_ r canceller = liftAff <<< makeAff $ \res -> do
   removeEnd <- onceEnd r do
     removeError
     ret <- liftST $ Array.ST.unsafeFreeze bufs
-    res (Right ret)
+    res (Right (Tuple ret false))
 
   let
     cleanupRethrow err = do
@@ -200,12 +208,18 @@ readAll_ r canceller = liftAff <<< makeAff $ \res -> do
 
   -- try to read right away.
   catchException cleanupRethrow do
-    untilE do
-      Stream.read r Nothing >>= case _ of
-        Nothing -> pure true
-        Just chunk -> do
-          void $ liftST $ Array.ST.push chunk bufs
-          pure false
+    ifM (readable r)
+      do
+        untilE do
+          Stream.read r Nothing >>= case _ of
+            Nothing -> pure true
+            Just chunk -> do
+              void $ liftST $ Array.ST.push chunk bufs
+              pure false
+      do
+        removeError
+        removeEnd
+        res (Right (Tuple [] false))
 
   -- then wait for the stream to be readable until the stream has ended.
   let
@@ -238,7 +252,7 @@ readN
    . MonadAff m
   => Readable r
   -> Int
-  -> m (Array Buffer)
+  -> m (Tuple (Array Buffer) Boolean)
 readN r n = readN_ r (\_ -> pure unit) n
 
 -- | __readN__ with a canceller argument.
@@ -248,7 +262,7 @@ readN_
   => Readable r
   -> (Readable r -> Effect Unit)
   -> Int
-  -> m (Array Buffer)
+  -> m (Tuple (Array Buffer) Boolean)
 readN_ r canceller n = liftAff <<< makeAff $ \res -> do
   redRef <- liftST $ STRef.new 0
   bufs <- liftST $ Array.ST.new
@@ -261,7 +275,7 @@ readN_ r canceller n = liftAff <<< makeAff $ \res -> do
   removeEnd <- onceEnd r do
     removeError
     ret <- liftST $ Array.ST.unsafeFreeze bufs
-    res (Right ret)
+    res (Right (Tuple ret false))
 
   let
     cleanupRethrow err = do
@@ -293,12 +307,19 @@ readN_ r canceller n = liftAff <<< makeAff $ \res -> do
           removeError
           removeEnd
           ret <- liftST $ Array.ST.unsafeFreeze bufs
-          res (Right ret)
+          readagain <- readable r
+          res (Right (Tuple ret readagain))
         else
           continuation unit
 
   -- try to read right away.
-  tryToRead (\_ -> pure unit)
+  ifM (readable r)
+    do
+      tryToRead (\_ -> pure unit)
+    do
+      removeError
+      removeEnd
+      res (Right (Tuple [] false))
 
   -- if there were not enough bytes right away, then wait for bytes to come in.
   let

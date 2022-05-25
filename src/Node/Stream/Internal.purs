@@ -3,6 +3,7 @@ module Node.Stream.Aff.Internal
   , onceEnd
   , onceError
   , onceReadable
+  , readable
   )
   where
 
@@ -55,3 +56,13 @@ foreign import onceError
    . Stream r
   -> (Error -> Effect Unit)
   -> Effect (Effect Unit)
+
+-- | The [`readable.readable`](https://nodejs.org/api/stream.html#readablereadable)
+-- | property of a stream.
+-- |
+-- | > Is true if it is safe to call `readable.read()`, which means the stream
+-- | > has not been destroyed or emitted 'error' or 'end'.
+foreign import readable
+  :: forall r
+   . Readable r
+  -> Effect Boolean

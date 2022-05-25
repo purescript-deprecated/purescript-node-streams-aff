@@ -12,6 +12,7 @@ import Prelude
 import Data.Array as Array
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
+import Data.Tuple (Tuple(..), fst)
 import Effect (Effect)
 import Effect.Aff (Error, Milliseconds(..), runAff_)
 import Effect.Class (liftEffect)
@@ -45,11 +46,16 @@ main = unsafePartial $ do
           outstring <- liftEffect $ Buffer.fromString "aaaaaaaaaa" UTF8
           write outfile $ Array.replicate magnitude outstring
           infile <- liftEffect $ createReadStream outfilename
-          input1 <- readSome infile
-          input2 <- readN infile (5 * magnitude)
-          input3 <- readAll infile
+          Tuple input1 _ <- readSome infile
+          Tuple input2 _ <- readN infile (5 * magnitude)
+          Tuple input3 readagain <- readAll infile
+          shouldEqual readagain false
+          _ :: Buffer <- liftEffect <<< concat <<< fst =<< readSome infile
+          void $ readN infile 1
+          void $ readAll infile
           let inputs = input1 <> input2 <> input3
           input :: Buffer <- liftEffect $ concat inputs
           inputSize <- liftEffect $ Buffer.size input
           shouldEqual (10 * magnitude) inputSize
+
     pure (pure unit)
