@@ -356,12 +356,16 @@ write_ w canceller bs = liftAff <<< makeAff $ \res -> do
 
   let
     callback = case _ of
-      Just err -> res $ Left err
+      Just err -> res (Left err)
       Nothing -> pure unit
 
     callbackLast = case _ of
-      Just err -> res $ Left err
-      Nothing -> res $ Right unit
+      Just err -> do
+        removeError
+        res (Left err)
+      Nothing -> do
+        removeError
+        res (Right unit)
 
     oneWrite = do
       catchException (res <<< Left) do
@@ -380,7 +384,6 @@ write_ w canceller bs = liftAff <<< makeAff $ \res -> do
                 pure true
 
   oneWrite
-  removeError
   pure $ effectCanceler (canceller w)
 
 -- | Close a `Writable` file stream.
