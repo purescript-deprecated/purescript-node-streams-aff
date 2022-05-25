@@ -42,9 +42,9 @@ main = unsafePartial $ do
 
   -- runAff_ (either (unsafeCoerce >>> Console.error) (\_ -> pure unit)) do
 
-  Console.log $ "stdoutIsTTY " <> show stdoutIsTTY <> "\n"
+  -- Console.log $ "stdoutIsTTY " <> show stdoutIsTTY <> "\n"
 
-  exiter <- noExit
+  -- exiter <- noExit
 
   runAff_ completion do
     -- write' stdout "ENTER \n"
@@ -53,9 +53,9 @@ main = unsafePartial $ do
       -- b <- liftEffect $ Buffer.create 0
       b <- liftEffect $ Buffer.fromString "aaaaaaaaaa" UTF8
       -- write stdout $ Array.replicate 100000 b
-      write stdout $ Array.replicate 1 b
+      write stdout $ Array.replicate 100000 b
       -- write stdout [b]
     -- write' stdout "EXIT\n"
-    liftEffect exiter
+    -- liftEffect exiter
     -- pure $ Console.log "log completion"
     pure (pure unit)

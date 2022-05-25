@@ -98,14 +98,13 @@ import Data.Maybe (Maybe(..))
 import Effect (Effect, untilE)
 import Effect.Aff (effectCanceler, makeAff)
 import Effect.Aff.Class (class MonadAff, liftAff)
-import Effect.Console as Console
 import Effect.Exception (catchException)
 import Node.Buffer (Buffer)
 import Node.Buffer as Buffer
 import Node.Encoding (Encoding(..))
 import Node.Stream (Readable, Writable)
 import Node.Stream as Stream
-import Node.Stream.Aff.Internal (clearInterval, hasRef, setInterval)
+import Node.Stream.Aff.Internal (clearInterval, hasRef, onceReadable, setInterval)
 import Node.Stream.Aff.Internal (onceDrain, onceEnd, onceError, onceReadable)
 import Node.Stream.Aff.Internal (unbuffer) as Reexport
 
@@ -133,22 +132,40 @@ readSome_
   -> (Readable r -> Effect Unit)
   -> m (Array Buffer)
 readSome_ r canceller = liftAff <<< makeAff $ \res -> do
+  bufs <- liftST $ Array.ST.new
 
-  onceError r $ res <<< Left
+  removeError <- onceError r $ res <<< Left
 
-  onceReadable r do
-    catchException (res <<< Left) do
-      bufs <- liftST $ Array.ST.new
-      untilE do
-        Stream.read r Nothing >>= case _ of
-          -- “The 'readable' event will also be emitted once the end of the
-          -- stream data has been reached but before the 'end' event is emitted.”
-          Nothing -> pure true
-          Just chunk -> do
-            void $ liftST $ Array.ST.push chunk bufs
-            pure false
-      ret <- liftST $ Array.ST.unsafeFreeze bufs
-      res $ Right ret
+  -- try to read right away.
+  catchException (res <<< Left) do
+    untilE do
+      Stream.read r Nothing >>= case _ of
+        Nothing -> pure true
+        Just chunk -> do
+          void $ liftST $ Array.ST.push chunk bufs
+          pure false
+
+  ret1 <- liftST $ Array.ST.unsafeFreeze bufs
+  if Array.length ret1 == 0 then do
+    -- if we couldn't read anything right away, then wait until the stream is readable.
+    -- “The 'readable' event will also be emitted once the end of the
+    -- stream data has been reached but before the 'end' event is emitted.”
+    void $ onceReadable r do
+      catchException (res <<< Left) do
+        untilE do
+          Stream.read r Nothing >>= case _ of
+            Nothing -> pure true
+            Just chunk -> do
+              void $ liftST $ Array.ST.push chunk bufs
+              pure false
+        ret2 <- liftST $ Array.ST.unsafeFreeze bufs
+        removeError
+        res (Right ret2)
+
+    -- return what we read right away
+  else do
+    removeError
+    res (Right ret1)
 
   pure $ effectCanceler (canceller r)
 
@@ -172,27 +189,44 @@ readAll_
 readAll_ r canceller = liftAff <<< makeAff $ \res -> do
   bufs <- liftST $ Array.ST.new
 
-  onceError r $ res <<< Left
+  removeError <- onceError r $ res <<< Left
 
-  onceEnd r do
+  removeEnd <- onceEnd r do
+    removeError
     ret <- liftST $ Array.ST.unsafeFreeze bufs
-    res $ Right ret
+    res (Right ret)
 
   let
-    oneRead = do
-      onceReadable r do
+    cleanupRethrow err = do
+      removeError
+      removeEnd
+      res (Left err)
+
+  -- try to read right away.
+  catchException cleanupRethrow do
+    untilE do
+      Stream.read r Nothing >>= case _ of
+        Nothing -> pure true
+        Just chunk -> do
+          void $ liftST $ Array.ST.push chunk bufs
+          pure false
+
+  -- then wait for the stream to be readable until the stream has ended.
+  let
+    waitToRead = do
+      void $ onceReadable r do
         -- “The 'readable' event will also be emitted once the end of the
         -- stream data has been reached but before the 'end' event is emitted.”
-        catchException (res <<< Left) do
+        catchException cleanupRethrow do
           untilE do
             Stream.read r Nothing >>= case _ of
               Nothing -> pure true
               Just chunk -> do
                 _ <- liftST $ Array.ST.push chunk bufs
                 pure false
-          oneRead -- this is not recursion
+          waitToRead -- this is not recursion
 
-  oneRead
+  waitToRead
   pure $ effectCanceler (canceller r)
 
 
@@ -223,42 +257,97 @@ readN_ r canceller n = liftAff <<< makeAff $ \res -> do
   redRef <- liftST $ STRef.new 0
   bufs <- liftST $ Array.ST.new
 
-  onceError r $ res <<< Left
+  -- TODO on error, we're not calling removeEnd...
+  removeError <- onceError r $ res <<< Left
 
   -- The `end` event is sometimes raised after we have read N bytes, even
   -- if there are more bytes in the stream?
-  onceEnd r do
+  removeEnd <- onceEnd r do
+    removeError
     ret <- liftST $ Array.ST.unsafeFreeze bufs
-    res $ Right ret
+    res (Right ret)
 
   let
-    oneRead = do
-      onceReadable r do
-        catchException (res <<< Left) do
-          untilE do
-            red <- liftST $ STRef.read redRef
-            -- https://nodejs.org/docs/latest-v15.x/api/stream.html#stream_readable_read_size
-            -- “If size bytes are not available to be read, null will be returned
-            -- unless the stream has ended, in which case all of the data remaining
-            -- in the internal buffer will be returned.”
-            Stream.read r (Just (n-red)) >>= case _ of
-              Nothing -> pure true
-              Just chunk -> do
-                _ <- liftST $ Array.ST.push chunk bufs
-                s <- Buffer.size chunk
-                red' <- liftST $ STRef.modify (_+s) redRef
-                if red' >= n then
-                  pure true
-                else
-                  pure false
-          red <- liftST $ STRef.read redRef
-          if red >= n then do
-            ret <- liftST $ Array.ST.unsafeFreeze bufs
-            res $ Right ret
-          else
-            oneRead -- this is not recursion
+    cleanupRethrow err = do
+      removeError
+      removeEnd
+      res (Left err)
 
-  oneRead
+    -- try to read N bytes and then either return N bytes or run a continuation
+    tryToRead continuation = do
+      catchException cleanupRethrow do
+        untilE do
+          red <- liftST $ STRef.read redRef
+          -- https://nodejs.org/docs/latest-v15.x/api/stream.html#stream_readable_read_size
+          -- “If size bytes are not available to be read, null will be returned
+          -- unless the stream has ended, in which case all of the data remaining
+          -- in the internal buffer will be returned.”
+          Stream.read r (Just (n-red)) >>= case _ of
+            Nothing -> pure true
+            Just chunk -> do
+              _ <- liftST $ Array.ST.push chunk bufs
+              s <- Buffer.size chunk
+              red' <- liftST $ STRef.modify (_+s) redRef
+              if red' >= n then
+                pure true
+              else
+                pure false
+        red <- liftST $ STRef.read redRef
+        if red >= n then do
+          removeError
+          removeEnd
+          ret <- liftST $ Array.ST.unsafeFreeze bufs
+          res (Right ret)
+        else
+          continuation unit
+
+  -- try to read right away.
+  tryToRead (\_ -> pure unit)
+
+  -- if there were not enough bytes right away, then wait for bytes to come in.
+  let
+    waitToRead _ = do
+      void $ onceReadable r do
+        tryToRead waitToRead
+  waitToRead unit
+
+  -- fix \waitToRead -> do
+  --   void $ onceReadable r do
+  --     tryToRead waitToRead
+  -- let
+  --   waitToRead = do
+  --     void $ onceReadable r do
+  --       tryToRead waitToRead -- this is not recursion
+
+
+  -- let
+  --   oneRead = do
+  --     void $ onceReadable r do
+  --       catchException cleanupRethrow do
+  --         untilE do
+  --           red <- liftST $ STRef.read redRef
+  --           -- https://nodejs.org/docs/latest-v15.x/api/stream.html#stream_readable_read_size
+  --           -- “If size bytes are not available to be read, null will be returned
+  --           -- unless the stream has ended, in which case all of the data remaining
+  --           -- in the internal buffer will be returned.”
+  --           Stream.read r (Just (n-red)) >>= case _ of
+  --             Nothing -> pure true
+  --             Just chunk -> do
+  --               _ <- liftST $ Array.ST.push chunk bufs
+  --               s <- Buffer.size chunk
+  --               red' <- liftST $ STRef.modify (_+s) redRef
+  --               if red' >= n then
+  --                 pure true
+  --               else
+  --                 pure false
+  --         red <- liftST $ STRef.read redRef
+  --         if red >= n then do
+  --           ret <- liftST $ Array.ST.unsafeFreeze bufs
+  --           res $ Right ret
+  --         else
+  --           oneRead -- this is not recursion
+
+  -- waitToRead
   pure $ effectCanceler (canceller r)
 
 
@@ -282,7 +371,7 @@ write_
 write_ w canceller bs = liftAff <<< makeAff $ \res -> do
   bufs <- liftST $ Array.ST.thaw bs
 
-  onceError w $ res <<< Left
+  removeError <- onceError w $ res <<< Left
 
   let
     callback = case _ of
@@ -306,11 +395,25 @@ write_ w canceller bs = liftAff <<< makeAff $ \res -> do
               if nobackpressure then do
                 pure false
               else do
-                onceDrain w oneWrite
+                _ <- onceDrain w oneWrite
                 pure true
 
   oneWrite
+  removeError
   pure $ effectCanceler (canceller w)
+
+
+-- TODO Remove all listeners before returning
+-- https://nodejs.org/api/events.html#emitterremovelistenereventname-listener
+--
+-- (node:483527) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 end listeners added to [Socket]. Use emitter.setMaxListeners() to increase limit
+-- (Use `node --trace-warnings ...` to show where the warning was created)
+--
+-- Buffer.size 28
+--
+-- (node:483527) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 error listeners added to [Socket]. Use emitter.setMaxListeners() to increase limit
+
+
 
 -- | https://github.com/purescript-contrib/pulp/blob/79dd954c86a5adc57051cad127c8888756f680a6/src/Pulp/System/Stream.purs#L41
 write' :: forall m w. MonadAff m => Writable w -> String -> m Unit
