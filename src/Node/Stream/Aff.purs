@@ -73,18 +73,19 @@
 -- | The canceller argument is an action to perform in the event that
 -- | this `Aff` is cancelled.
 module Node.Stream.Aff
-  ( readSome
-  , readSome_
+  ( module Reexport
   , readAll
   , readAll_
   , readN
   , readN_
+  , readSome
+  , readSome_
   , write
+  , write'
   , write_
-  , module Reexport
+  , noExit
   )
-
-where
+  where
 
 import Prelude
 
@@ -97,11 +98,14 @@ import Data.Maybe (Maybe(..))
 import Effect (Effect, untilE)
 import Effect.Aff (effectCanceler, makeAff)
 import Effect.Aff.Class (class MonadAff, liftAff)
+import Effect.Console as Console
 import Effect.Exception (catchException)
 import Node.Buffer (Buffer)
 import Node.Buffer as Buffer
+import Node.Encoding (Encoding(..))
 import Node.Stream (Readable, Writable)
 import Node.Stream as Stream
+import Node.Stream.Aff.Internal (clearInterval, hasRef, setInterval)
 import Node.Stream.Aff.Internal (onceDrain, onceEnd, onceError, onceReadable)
 import Node.Stream.Aff.Internal (unbuffer) as Reexport
 
@@ -307,3 +311,28 @@ write_ w canceller bs = liftAff <<< makeAff $ \res -> do
 
   oneWrite
   pure $ effectCanceler (canceller w)
+
+-- | https://github.com/purescript-contrib/pulp/blob/79dd954c86a5adc57051cad127c8888756f680a6/src/Pulp/System/Stream.purs#L41
+write' :: forall m w. MonadAff m => Writable w -> String -> m Unit
+write' stream str = liftAff $ makeAff (\cb -> mempty <* void (Stream.writeString stream UTF8 str (\_ -> cb (Right unit))))
+
+
+-- | Prevent Node.js from exiting while an `Effect` is running.
+noExit :: Effect (Effect Unit)
+-- noExit :: forall a. (Effect unit -> Effect a) -> Effect a
+noExit = do
+  -- Idea from
+  -- https://stackoverflow.com/a/62869265/187223
+
+  id <- setInterval 1000 (pure unit)
+  pure (clearInterval id)
+
+  -- id <- setInterval 1 (Console.log "INTERVAL\n")
+  -- h <- hasRef id
+  -- Console.log $ "TIMEOUT " <> show h
+  -- pure do
+  --   Console.log "INTERVAL END\n"
+  --   clearInterval id
+
+  -- id <- setTimeout 1 do
+  --   Console.log "TIMEOUT\n"
