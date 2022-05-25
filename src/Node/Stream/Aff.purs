@@ -65,7 +65,7 @@
 -- | Internally the writing functions will call the
 -- | [`writable.write(chunk[, encoding][, callback])`](https://nodejs.org/docs/latest/api/stream.html#writablewritechunk-encoding-callback)
 -- | function on each of the `Buffer`s,
--- | asychronously waiting if there is backpressure from the stream.
+-- | and will asychronously wait if there is “backpressure” from the stream.
 -- |
 -- | The writing functions will complete after all the data is flushed to the
 -- | stream.
@@ -77,14 +77,15 @@
 -- | The canceller argument is an action to perform in the event that
 -- | this `Aff` is cancelled.
 module Node.Stream.Aff
-  ( readAll
+  ( readSome
+  , readSome_
+  , readAll
   , readAll_
   , readN
   , readN_
-  , readSome
-  , readSome_
   , write
   , write_
+  , writableClose
   )
   where
 
@@ -98,14 +99,14 @@ import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..))
 import Effect (Effect, untilE)
-import Effect.Aff (effectCanceler, makeAff)
+import Effect.Aff (effectCanceler, makeAff, nonCanceler)
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Exception (catchException)
 import Node.Buffer (Buffer)
 import Node.Buffer as Buffer
 import Node.Stream (Readable, Writable)
 import Node.Stream as Stream
-import Node.Stream.Aff.Internal (onceDrain, onceEnd, onceError, onceReadable, readable)
+import Node.Stream.Aff.Internal (onceDrain, onceEnd, onceError, onceReadable, readable, writeStreamClose)
 
 
 -- | Wait until there is some data available from the stream, then read it.
@@ -175,7 +176,7 @@ readSome_ r canceller = liftAff <<< makeAff $ \res -> do
   pure $ effectCanceler (canceller r)
 
 
--- | Read all data until the end of the stream. Note that `stdin` will never end.
+-- | Read all data until the end of the stream. Note that __stdin__ will never end.
 readAll
   :: forall m r
    . MonadAff m
@@ -381,3 +382,21 @@ write_ w canceller bs = liftAff <<< makeAff $ \res -> do
   oneWrite
   removeError
   pure $ effectCanceler (canceller w)
+
+-- | Close a `Writable` file stream.
+-- |
+-- | Will complete after the file stream is closed.
+writableClose
+  :: forall m w
+   . MonadAff m
+  => Writable w
+  -> m Unit
+writableClose w = liftAff <<< makeAff $ \res -> do
+
+  removeError <- onceError w $ res <<< Left
+
+  writeStreamClose w do
+    removeError
+    res (Right unit)
+
+  pure nonCanceler

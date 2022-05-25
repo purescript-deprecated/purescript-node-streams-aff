@@ -21,10 +21,10 @@ import Node.Buffer (Buffer, concat)
 import Node.Buffer as Buffer
 import Node.Encoding (Encoding(..))
 import Node.FS.Stream (createReadStream, createWriteStream)
-import Node.Stream.Aff (readAll, readN, readSome, write)
+import Node.Stream.Aff (readAll, readN, readSome, writableClose, write)
 import Partial.Unsafe (unsafePartial)
 import Test.Spec (describe, it)
-import Test.Spec.Assertions (shouldEqual)
+import Test.Spec.Assertions (expectError, shouldEqual)
 import Test.Spec.Reporter (consoleReporter)
 import Test.Spec.Runner (defaultConfig, runSpecT)
 import Unsafe.Coerce (unsafeCoerce)
@@ -57,5 +57,12 @@ main = unsafePartial $ do
           input :: Buffer <- liftEffect $ concat inputs
           inputSize <- liftEffect $ Buffer.size input
           shouldEqual (10 * magnitude) inputSize
+        it "writes and closes" do
+          let outfilename = "/tmp/test2.txt"
+          outfile <- liftEffect $ createWriteStream outfilename
+          b <- liftEffect $ Buffer.fromString "test" UTF8
+          write outfile [b]
+          writableClose outfile
+          expectError $ write outfile [b]
 
     pure (pure unit)

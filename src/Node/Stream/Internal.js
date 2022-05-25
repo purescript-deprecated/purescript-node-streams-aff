@@ -1,35 +1,27 @@
-import timers from 'node:timers';
-
-export function onceReadable(s) {
-  return f => () => {
-    s.once('readable', f);
-    return () => {s.removeListener('readable', f);};
-  };
+export const onceReadable = s => f => () => {
+  s.once('readable', f);
+  return () => {s.removeListener('readable', f);};
 }
 
-export function onceEnd(s) {
-  return f => () => {
-    s.once('end', f);
-    return () => {s.removeListener('end', f);};
-  };
+export const onceEnd = s => f => () => {
+  s.once('end', f);
+  return () => {s.removeListener('end', f);};
 }
 
-export function onceDrain(s) {
-  return f => () => {
-    s.once('drain', f);
-    return () => {s.removeListener('drain', f);};
-  };
+export const onceDrain = s => f => () => {
+  s.once('drain', f);
+  return () => {s.removeListener('drain', f);};
 }
 
-export function onceError(s) {
-  return f => () => {
-    s.once('error', f);
-    return () => {s.removeListener('error', f);};
-  };
+export const onceError = s => f => () => {
+  s.once('error', f);
+  return () => {s.removeListener('error', f);};
 }
 
-export function readable(s) {
-  return () => {
+export const readable = s => () => {
     return s.readable;
-  }
+}
+
+export const writeStreamClose = s => cb => () => {
+  return s.close(cb);
 }

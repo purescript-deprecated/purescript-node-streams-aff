@@ -1,9 +1,13 @@
+-- | Maybe the stuff in here should be moved into the
+-- | [__Node.Stream__](https://pursuit.purescript.org/packages/purescript-node-streams/docs/Node.Stream)
+-- | module?
 module Node.Stream.Aff.Internal
   ( onceDrain
   , onceEnd
   , onceError
   , onceReadable
   , readable
+  , writeStreamClose
   )
   where
 
@@ -66,3 +70,13 @@ foreign import readable
   :: forall r
    . Readable r
   -> Effect Boolean
+
+-- | The [`writeStream.close([callback])`](https://nodejs.org/api/fs.html#writestreamclosecallback)
+-- | function.
+-- |
+-- | Accepts a callback that will be executed once the writeStream is closed.
+foreign import writeStreamClose
+  :: forall w
+   . Writable w
+  -> Effect Unit
+  -> Effect Unit
