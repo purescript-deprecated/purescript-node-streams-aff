@@ -1,4 +1,4 @@
--- | Asynchronous I/O with *Node.js* streams.
+-- | Asynchronous I/O with [*Node.js* Stream](https://nodejs.org/docs/latest/api/stream.html).
 -- |
 -- | Open file streams with
 -- | [__Node.FS.Stream__](https://pursuit.purescript.org/packages/purescript-node-fs/docs/Node.FS.Stream).
@@ -332,7 +332,9 @@ readN_ r canceller n = liftAff <<< makeAff $ \res -> do
   pure $ effectCanceler (canceller r)
 
 
--- | Write to a stream. Will complete after the data is flushed to the stream.
+-- | Write to a stream.
+-- |
+-- | Will complete after the data is flushed to the stream.
 write
   :: forall m w
    . MonadAff m
