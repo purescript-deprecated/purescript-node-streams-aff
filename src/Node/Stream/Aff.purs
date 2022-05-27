@@ -6,6 +6,9 @@
 -- | Open process streams with
 -- | [__Node.Process__](https://pursuit.purescript.org/packages/purescript-node-process/docs/Node.Process).
 -- |
+-- | Read and write strings with the __toString__ and __fromString__ functions in
+-- | [__Node.Buffer__](https://pursuit.purescript.org/packages/purescript-node-buffer/docs/Node.Buffer#t:MutableBuffer).
+-- |
 -- | All I/O errors will be thrown through the `Aff` `MonadError` class
 -- | instance.
 -- |
@@ -21,7 +24,7 @@
 -- | [`readable.read([size])`](https://nodejs.org/docs/latest/api/stream.html#readablereadsize)
 -- | function and are subject to the caveats of that function.
 -- |
--- | #### Results
+-- | #### Result Buffers
 -- |
 -- | The result of a reading function may be chunked into more than one `Buffer`.
 -- | The `fst` element of the result `Tuple` is an `Array Buffer` of what
@@ -42,10 +45,16 @@
 -- |     <- liftEffect $ Array.foldM (\a b -> (a+_) <$> size b) 0 inputs
 -- | ```
 -- |
+-- | #### Result `readagain` flag
+-- |
 -- | The `snd` element of the result `Tuple` is a `Boolean` flag which
 -- | is `true` if the stream has not reached End-Of-File (and also if the stream
--- | has not errored or been destroyed.) If the flag is `false` then
+-- | has not errored or been destroyed), so we know we can read again.
+-- | If the flag is `false` then
 -- | no more bytes will ever be produced by the stream.
+-- |
+-- | Reading from an ended, closed, errored, or destroyed stream
+-- | will complete immediately with `Tuple [] false`.
 -- |
 -- | #### Canceller argument
 -- |
