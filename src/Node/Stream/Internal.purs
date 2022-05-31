@@ -20,8 +20,8 @@ import Node.Stream (Readable, Stream, Writable)
 -- | Listen for one `readable` event, call the callback, then remove
 -- | the event listener.
 -- |
--- | Returns an effect for removing the event listener even if no event
--- | was raised.
+-- | Returns an effect for removing the event listener before the event
+-- | is raised.
 foreign import onceReadable
   :: forall r
    . Readable r
@@ -31,8 +31,8 @@ foreign import onceReadable
 -- | Listen for one `end` event, call the callback, then remove
 -- | the event listener.
 -- |
--- | Returns an effect for removing the event listener even if no event
--- | was raised.
+-- | Returns an effect for removing the event listener before the event
+-- | is raised.
 foreign import onceEnd
   :: forall r
    . Readable r
@@ -42,8 +42,8 @@ foreign import onceEnd
 -- | Listen for one `drain` event, call the callback, then remove
 -- | the event listener.
 -- |
--- | Returns an effect for removing the event listener even if no event
--- | was raised.
+-- | Returns an effect for removing the event listener before the event
+-- | is raised.
 foreign import onceDrain
   :: forall w
    . Writable w
@@ -53,8 +53,8 @@ foreign import onceDrain
 -- | Listen for one `error` event, call the callback, then remove
 -- | the event listener.
 -- |
--- | Returns an effect for removing the event listener even if no event
--- | was raised.
+-- | Returns an effect for removing the event listener before the event
+-- | is raised.
 foreign import onceError
   :: forall r
    . Stream r
@@ -74,7 +74,7 @@ foreign import readable
 -- | The [`writeStream.close([callback])`](https://nodejs.org/api/fs.html#writestreamclosecallback)
 -- | function.
 -- |
--- | Accepts a callback that will be executed once the writeStream is closed.
+-- | Accepts a callback that will be executed when the writeStream has closed.
 foreign import writeStreamClose
   :: forall w
    . Writable w

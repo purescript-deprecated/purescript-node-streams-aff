@@ -1,16 +1,21 @@
--- | Asynchronous I/O with [*Node.js* Stream](https://nodejs.org/docs/latest/api/stream.html).
+-- | Asynchronous I/O with the [*Node.js* Stream API](https://nodejs.org/docs/latest/api/stream.html).
 -- |
--- | Open file streams with
+-- | Open __file streams__ with
 -- | [__Node.FS.Stream__](https://pursuit.purescript.org/packages/purescript-node-fs/docs/Node.FS.Stream).
 -- |
--- | Open process streams with
+-- | Open __process streams__ with
 -- | [__Node.Process__](https://pursuit.purescript.org/packages/purescript-node-process/docs/Node.Process).
 -- |
--- | Read and write strings with the __toString__ and __fromString__ functions in
+-- | Read and write __`String`__s with the `toString` and `fromString` functions in
 -- | [__Node.Buffer__](https://pursuit.purescript.org/packages/purescript-node-buffer/docs/Node.Buffer#t:MutableBuffer).
 -- |
--- | All I/O errors will be thrown through the `Aff` `MonadError` class
+-- | All __I/O errors__ will be thrown through the `Aff` `MonadError` class
 -- | instance.
+-- |
+-- | `Aff` __cancellation__ will clean up all *Node.js* event listeners.
+-- |
+-- | All of these `Aff` functions will prevent the *Node.js* __event loop__ from
+-- | exiting until the `Aff` function completes.
 -- |
 -- | ## Reading
 -- |
@@ -56,14 +61,7 @@
 -- | Reading from an ended, closed, errored, or destroyed stream
 -- | will complete immediately with `Tuple [] false`.
 -- |
--- | #### Canceller argument
--- |
--- | The reading functions suffixed with underscore take a canceller argument.
--- |
--- | The canceller argument is an action to perform in the event that
--- | this `Aff` is cancelled. For example, to destroy the stream
--- | in the event that the `Aff` is cancelled pass `Node.Stream.destroy`
--- | as the canceller.
+-- | The `readagain` flag will give the same answer as a call to `Internal.readable`.
 -- |
 -- | ## Writing
 -- |
@@ -78,22 +76,11 @@
 -- |
 -- | The writing functions will complete after all the data is flushed to the
 -- | stream.
--- |
--- | #### Canceller argument
--- |
--- | The writing functions suffixed with underscore take a canceller argument.
--- |
--- | The canceller argument is an action to perform in the event that
--- | this `Aff` is cancelled.
 module Node.Stream.Aff
   ( readSome
-  , readSome_
   , readAll
-  , readAll_
   , readN
-  , readN_
   , write
-  , write_
   , writableClose
   )
   where
@@ -101,14 +88,14 @@ module Node.Stream.Aff
 import Prelude
 
 import Control.Monad.ST.Class (liftST)
-import Control.Monad.ST.Ref as STRef
+import Control.Monad.ST.Ref as ST.Ref
 import Data.Array as Array
 import Data.Array.ST as Array.ST
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..))
 import Effect (Effect, untilE)
-import Effect.Aff (effectCanceler, makeAff, nonCanceler)
+import Effect.Aff (effectCanceler, makeAff)
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Exception (catchException)
 import Node.Buffer (Buffer)
@@ -128,16 +115,7 @@ readSome
    . MonadAff m
   => Readable r
   -> m (Tuple (Array Buffer) Boolean)
-readSome r = readSome_ r (\_ -> pure unit)
-
--- | __readSome__ with a canceller argument.
-readSome_
-  :: forall m r
-   . MonadAff m
-  => Readable r
-  -> (Readable r -> Effect Unit)
-  -> m (Tuple (Array Buffer) Boolean)
-readSome_ r canceller = liftAff <<< makeAff $ \res -> do
+readSome r = liftAff <<< makeAff $ \res -> do
   bufs <- liftST $ Array.ST.new
 
   removeError <- onceError r $ res <<< Left
@@ -158,12 +136,12 @@ readSome_ r canceller = liftAff <<< makeAff $ \res -> do
 
 
   ret1 <- liftST $ Array.ST.unsafeFreeze bufs
-  if Array.length ret1 == 0 then do
+  removeReadable <- if Array.length ret1 == 0 then do
     -- if we couldn't read anything right away, then wait until the stream is readable.
     -- “The 'readable' event will also be emitted once the end of the
     -- stream data has been reached but before the 'end' event is emitted.”
     -- We already checked the `readable` property so we don't have to check again.
-    void $ onceReadable r do
+    onceReadable r do
       catchException (res <<< Left) do
         untilE do
           Stream.read r Nothing >>= case _ of
@@ -181,27 +159,26 @@ readSome_ r canceller = liftAff <<< makeAff $ \res -> do
     removeError
     readagain <- readable r
     res (Right (Tuple ret1 readagain))
+    pure (pure unit) -- dummy canceller
 
-  pure $ effectCanceler (canceller r)
+  -- canceller might by called while waiting for `onceReadable`
+  pure $ effectCanceler do
+    removeError
+    removeReadable
 
 
--- | Read all data until the end of the stream. Note that __stdin__ will never end.
+
+-- | Read all data until the end of the stream.
+-- |
+-- | Note that __stdin__ will never end.
 readAll
   :: forall m r
    . MonadAff m
   => Readable r
   -> m (Tuple (Array Buffer) Boolean)
-readAll r = readAll_ r (\_ -> pure unit)
-
--- | __readAll__ with a canceller argument.
-readAll_
-  :: forall m r
-   . MonadAff m
-  => Readable r
-  -> (Readable r -> Effect Unit)
-  -> m (Tuple (Array Buffer) Boolean)
-readAll_ r canceller = liftAff <<< makeAff $ \res -> do
+readAll r = liftAff <<< makeAff $ \res -> do
   bufs <- liftST $ Array.ST.new
+  removeReadable <- liftST $ ST.Ref.new (pure unit :: Effect Unit)
 
   removeError <- onceError r $ res <<< Left
 
@@ -214,6 +191,7 @@ readAll_ r canceller = liftAff <<< makeAff $ \res -> do
     cleanupRethrow err = do
       removeError
       removeEnd
+      join $ liftST $ ST.Ref.read removeReadable
       res (Left err)
 
   -- try to read right away.
@@ -234,7 +212,7 @@ readAll_ r canceller = liftAff <<< makeAff $ \res -> do
   -- then wait for the stream to be readable until the stream has ended.
   let
     waitToRead = do
-      void $ onceReadable r do
+      removeReadable' <- onceReadable r do
         -- “The 'readable' event will also be emitted once the end of the
         -- stream data has been reached but before the 'end' event is emitted.”
         catchException cleanupRethrow do
@@ -245,9 +223,15 @@ readAll_ r canceller = liftAff <<< makeAff $ \res -> do
                 _ <- liftST $ Array.ST.push chunk bufs
                 pure false
           waitToRead -- this is not recursion
+      void $ liftST $ ST.Ref.write removeReadable' removeReadable
 
   waitToRead
-  pure $ effectCanceler (canceller r)
+
+  -- canceller might by called while waiting for `onceReadable`
+  pure $ effectCanceler do
+    removeError
+    removeEnd
+    join $ liftST $ ST.Ref.read removeReadable
 
 
 -- | Wait for *N* bytes to become available from the stream.
@@ -263,19 +247,10 @@ readN
   => Readable r
   -> Int
   -> m (Tuple (Array Buffer) Boolean)
-readN r n = readN_ r (\_ -> pure unit) n
-
--- | __readN__ with a canceller argument.
-readN_
-  :: forall m r
-   . MonadAff m
-  => Readable r
-  -> (Readable r -> Effect Unit)
-  -> Int
-  -> m (Tuple (Array Buffer) Boolean)
-readN_ r canceller n = liftAff <<< makeAff $ \res -> do
-  redRef <- liftST $ STRef.new 0
+readN r n = liftAff <<< makeAff $ \res -> do
+  redRef <- liftST $ ST.Ref.new 0
   bufs <- liftST $ Array.ST.new
+  removeReadable <- liftST $ ST.Ref.new (pure unit :: Effect Unit)
 
   -- TODO on error, we're not calling removeEnd...
   removeError <- onceError r $ res <<< Left
@@ -284,6 +259,7 @@ readN_ r canceller n = liftAff <<< makeAff $ \res -> do
   -- if there are more bytes in the stream?
   removeEnd <- onceEnd r do
     removeError
+    -- join $ liftST $ ST.Ref.read removeReadable
     ret <- liftST $ Array.ST.unsafeFreeze bufs
     res (Right (Tuple ret false))
 
@@ -291,13 +267,14 @@ readN_ r canceller n = liftAff <<< makeAff $ \res -> do
     cleanupRethrow err = do
       removeError
       removeEnd
+      join $ liftST $ ST.Ref.read removeReadable
       res (Left err)
 
     -- try to read N bytes and then either return N bytes or run a continuation
     tryToRead continuation = do
       catchException cleanupRethrow do
         untilE do
-          red <- liftST $ STRef.read redRef
+          red <- liftST $ ST.Ref.read redRef
           -- https://nodejs.org/docs/latest-v15.x/api/stream.html#stream_readable_read_size
           -- “If size bytes are not available to be read, null will be returned
           -- unless the stream has ended, in which case all of the data remaining
@@ -307,12 +284,12 @@ readN_ r canceller n = liftAff <<< makeAff $ \res -> do
             Just chunk -> do
               _ <- liftST $ Array.ST.push chunk bufs
               s <- Buffer.size chunk
-              red' <- liftST $ STRef.modify (_+s) redRef
+              red' <- liftST $ ST.Ref.modify (_+s) redRef
               if red' >= n then
                 pure true
               else
                 pure false
-        red <- liftST $ STRef.read redRef
+        red <- liftST $ ST.Ref.read redRef
         if red >= n then do
           removeError
           removeEnd
@@ -334,11 +311,16 @@ readN_ r canceller n = liftAff <<< makeAff $ \res -> do
   -- if there were not enough bytes right away, then wait for bytes to come in.
   let
     waitToRead _ = do
-      void $ onceReadable r do
+      removeReadable' <- onceReadable r do
         tryToRead waitToRead
+      void $ liftST $ ST.Ref.write removeReadable' removeReadable
   waitToRead unit
 
-  pure $ effectCanceler (canceller r)
+  -- canceller might by called while waiting for `onceReadable`
+  pure $ effectCanceler do
+    removeError
+    removeEnd
+    join $ liftST $ ST.Ref.read removeReadable
 
 
 -- | Write to a stream.
@@ -350,18 +332,9 @@ write
   => Writable w
   -> Array Buffer
   -> m Unit
-write w bs = write_ w (\_ -> pure unit) bs
-
--- | __write__ with a canceller argument.
-write_
-  :: forall m w
-   . MonadAff m
-  => Writable w
-  -> (Writable w -> Effect Unit)
-  -> Array Buffer
-  -> m Unit
-write_ w canceller bs = liftAff <<< makeAff $ \res -> do
+write w bs = liftAff <<< makeAff $ \res -> do
   bufs <- liftST $ Array.ST.thaw bs
+  removeDrain <- liftST $ ST.Ref.new (pure unit :: Effect Unit)
 
   removeError <- onceError w $ res <<< Left
 
@@ -391,11 +364,16 @@ write_ w canceller bs = liftAff <<< makeAff $ \res -> do
               if nobackpressure then do
                 pure false
               else do
-                _ <- onceDrain w oneWrite
+                removeDrain' <- onceDrain w oneWrite
+                void $ liftST $ ST.Ref.write removeDrain' removeDrain
                 pure true
 
   oneWrite
-  pure $ effectCanceler (canceller w)
+
+  -- canceller might be called while waiting for `onceDrain`
+  pure $ effectCanceler do
+    removeError
+    join $ liftST $ ST.Ref.read removeDrain
 
 -- | Close a `Writable` file stream.
 -- |
@@ -413,4 +391,5 @@ writableClose w = liftAff <<< makeAff $ \res -> do
     removeError
     res (Right unit)
 
-  pure nonCanceler
+  pure $ effectCanceler do
+    removeError
