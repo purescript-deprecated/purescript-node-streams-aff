@@ -20,6 +20,7 @@ conf //
   , "console"
   , "partial"
   , "unsafe-coerce"
+  , "control"
   ]
 , packages = packages_dev
 }
