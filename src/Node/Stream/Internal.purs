@@ -7,7 +7,6 @@ module Node.Stream.Aff.Internal
   , onceError
   , onceReadable
   , readable
-  , writeStreamClose
   )
   where
 
@@ -65,18 +64,8 @@ foreign import onceError
 -- | property of a stream.
 -- |
 -- | > Is true if it is safe to call `readable.read()`, which means the stream
--- | > has not been destroyed or emitted 'error' or 'end'.
+-- | > has not been destroyed or emitted `'error'` or `'end'`.
 foreign import readable
   :: forall r
    . Readable r
   -> Effect Boolean
-
--- | The [`writeStream.close([callback])`](https://nodejs.org/api/fs.html#writestreamclosecallback)
--- | function.
--- |
--- | Accepts a callback that will be executed when the writeStream has closed.
-foreign import writeStreamClose
-  :: forall w
-   . Writable w
-  -> Effect Unit
-  -> Effect Unit
