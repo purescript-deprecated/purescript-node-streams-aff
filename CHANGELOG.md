@@ -12,7 +12,7 @@ Bugfixes:
 
 Other improvements:
 
-# [Unreleased]
+# v3.0.0
 
 Breaking changes:
 
