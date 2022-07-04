@@ -1,3 +1,5 @@
+import stream from 'stream';
+
 export const onceReadable = s => f => () => {
   s.once('readable', f);
   return () => {s.removeListener('readable', f);};
@@ -19,5 +21,13 @@ export const onceError = s => f => () => {
 }
 
 export const readable = s => () => {
-    return s.readable;
+  return s.readable;
+}
+
+export const push = s => buf => () => {
+  return s.push(buf);
+}
+
+export const newReadable = () => {
+  return new stream.Readable();
 }

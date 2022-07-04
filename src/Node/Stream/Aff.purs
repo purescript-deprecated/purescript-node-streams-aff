@@ -87,7 +87,6 @@ module Node.Stream.Aff
 import Prelude
 
 import Control.Monad.ST.Class (liftST)
-import Control.Monad.ST.Ref as ST.Ref
 import Data.Array as Array
 import Data.Array.ST as Array.ST
 import Data.Either (Either(..))
@@ -98,6 +97,7 @@ import Effect.Aff (effectCanceler, makeAff, nonCanceler)
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Exception (catchException)
+import Effect.Ref as Ref
 import Node.Buffer (Buffer)
 import Node.Buffer as Buffer
 import Node.Encoding as Encoding
@@ -110,7 +110,6 @@ import Node.Stream.Aff.Internal (onceDrain, onceEnd, onceError, onceReadable, re
 -- |
 -- | This function is useful for streams like __stdin__ which never
 -- | reach End-Of-File.
--- |
 readSome
   :: forall m r
    . MonadAff m
@@ -120,6 +119,11 @@ readSome r = liftAff <<< makeAff $ \res -> do
   bufs <- liftST $ Array.ST.new
 
   removeError <- onceError r $ res <<< Left
+
+  removeEnd <- onceEnd r do
+    removeError
+    ret <- liftST $ Array.ST.unsafeFreeze bufs
+    res (Right (Tuple ret false))
 
   -- try to read right away.
   catchException (res <<< Left) do
@@ -133,15 +137,19 @@ readSome r = liftAff <<< makeAff $ \res -> do
               pure false
       do
         removeError
+        removeEnd
         res (Right (Tuple [] false))
 
 
   ret1 <- liftST $ Array.ST.unsafeFreeze bufs
-  removeReadable <- if Array.length ret1 == 0 then do
-    -- if we couldn't read anything right away, then wait until the stream is readable.
+  readagain <- readable r
+  removeReadable <- if readagain && Array.length ret1 == 0 then do
+    -- if still readable and we couldn't read anything right away,
+    -- then wait for the readable event.
     -- “The 'readable' event will also be emitted once the end of the
     -- stream data has been reached but before the 'end' event is emitted.”
-    -- We already checked the `readable` property so we don't have to check again.
+    -- if not readable then this was a zero-length Readable stream.
+    -- https://nodejs.org/api/stream.html#event-readable
     onceReadable r do
       catchException (res <<< Left) do
         untilE do
@@ -152,21 +160,22 @@ readSome r = liftAff <<< makeAff $ \res -> do
               pure false
         ret2 <- liftST $ Array.ST.unsafeFreeze bufs
         removeError
-        readagain <- readable r
-        res (Right (Tuple ret2 readagain))
+        removeEnd
+        readagain2 <- readable r
+        res (Right (Tuple ret2 readagain2))
 
     -- return what we read right away
   else do
     removeError
-    readagain <- readable r
+    removeEnd
     res (Right (Tuple ret1 readagain))
     pure (pure unit) -- dummy canceller
 
   -- canceller might by called while waiting for `onceReadable`
   pure $ effectCanceler do
     removeError
+    removeEnd
     removeReadable
-
 
 
 -- | Read all data until the end of the stream.
@@ -179,7 +188,7 @@ readAll
   -> m (Tuple (Array Buffer) Boolean)
 readAll r = liftAff <<< makeAff $ \res -> do
   bufs <- liftST $ Array.ST.new
-  removeReadable <- liftST $ ST.Ref.new (pure unit :: Effect Unit)
+  removeReadable <- Ref.new (pure unit :: Effect Unit)
 
   removeError <- onceError r $ res <<< Left
 
@@ -192,7 +201,7 @@ readAll r = liftAff <<< makeAff $ \res -> do
     cleanupRethrow err = do
       removeError
       removeEnd
-      join $ liftST $ ST.Ref.read removeReadable
+      join $ Ref.read removeReadable
       res (Left err)
 
   -- try to read right away.
@@ -224,7 +233,7 @@ readAll r = liftAff <<< makeAff $ \res -> do
                 _ <- liftST $ Array.ST.push chunk bufs
                 pure false
           waitToRead -- this is not recursion
-      void $ liftST $ ST.Ref.write removeReadable' removeReadable
+      Ref.write removeReadable' removeReadable
 
   waitToRead
 
@@ -232,7 +241,7 @@ readAll r = liftAff <<< makeAff $ \res -> do
   pure $ effectCanceler do
     removeError
     removeEnd
-    join $ liftST $ ST.Ref.read removeReadable
+    join $ Ref.read removeReadable
 
 
 -- | Wait for *N* bytes to become available from the stream.
@@ -249,9 +258,9 @@ readN
   -> Int
   -> m (Tuple (Array Buffer) Boolean)
 readN r n = liftAff <<< makeAff $ \res -> do
-  redRef <- liftST $ ST.Ref.new 0
+  redRef <- Ref.new 0
   bufs <- liftST $ Array.ST.new
-  removeReadable <- liftST $ ST.Ref.new (pure unit :: Effect Unit)
+  removeReadable <- Ref.new (pure unit :: Effect Unit)
 
   -- TODO on error, we're not calling removeEnd...
   removeError <- onceError r $ res <<< Left
@@ -260,7 +269,6 @@ readN r n = liftAff <<< makeAff $ \res -> do
   -- if there are more bytes in the stream?
   removeEnd <- onceEnd r do
     removeError
-    -- join $ liftST $ ST.Ref.read removeReadable
     ret <- liftST $ Array.ST.unsafeFreeze bufs
     res (Right (Tuple ret false))
 
@@ -268,14 +276,14 @@ readN r n = liftAff <<< makeAff $ \res -> do
     cleanupRethrow err = do
       removeError
       removeEnd
-      join $ liftST $ ST.Ref.read removeReadable
+      join $ Ref.read removeReadable
       res (Left err)
 
     -- try to read N bytes and then either return N bytes or run a continuation
     tryToRead continuation = do
       catchException cleanupRethrow do
         untilE do
-          red <- liftST $ ST.Ref.read redRef
+          red <- Ref.read redRef
           -- https://nodejs.org/docs/latest-v15.x/api/stream.html#stream_readable_read_size
           -- “If size bytes are not available to be read, null will be returned
           -- unless the stream has ended, in which case all of the data remaining
@@ -285,12 +293,12 @@ readN r n = liftAff <<< makeAff $ \res -> do
             Just chunk -> do
               _ <- liftST $ Array.ST.push chunk bufs
               s <- Buffer.size chunk
-              red' <- liftST $ ST.Ref.modify (_+s) redRef
+              red' <- Ref.modify (_+s) redRef
               if red' >= n then
                 pure true
               else
                 pure false
-        red <- liftST $ ST.Ref.read redRef
+        red <- Ref.read redRef
         if red >= n then do
           removeError
           removeEnd
@@ -314,14 +322,14 @@ readN r n = liftAff <<< makeAff $ \res -> do
     waitToRead _ = do
       removeReadable' <- onceReadable r do
         tryToRead waitToRead
-      void $ liftST $ ST.Ref.write removeReadable' removeReadable
+      Ref.write removeReadable' removeReadable
   waitToRead unit
 
   -- canceller might by called while waiting for `onceReadable`
   pure $ effectCanceler do
     removeError
     removeEnd
-    join $ liftST $ ST.Ref.read removeReadable
+    join $ Ref.read removeReadable
 
 
 -- | Write to a stream.
@@ -335,7 +343,7 @@ write
   -> m Unit
 write w bs = liftAff <<< makeAff $ \res -> do
   bufs <- liftST $ Array.ST.thaw bs
-  removeDrain <- liftST $ ST.Ref.new (pure unit :: Effect Unit)
+  removeDrain <- Ref.new (pure unit :: Effect Unit)
 
   removeError <- onceError w $ res <<< Left
 
@@ -366,7 +374,7 @@ write w bs = liftAff <<< makeAff $ \res -> do
                 pure false
               else do
                 removeDrain' <- onceDrain w oneWrite
-                void $ liftST $ ST.Ref.write removeDrain' removeDrain
+                void $ Ref.write removeDrain' removeDrain
                 pure true
 
   oneWrite
@@ -374,7 +382,7 @@ write w bs = liftAff <<< makeAff $ \res -> do
   -- canceller might be called while waiting for `onceDrain`
   pure $ effectCanceler do
     removeError
-    join $ liftST $ ST.Ref.read removeDrain
+    join $ Ref.read removeDrain
 
 -- | Signal that no more data will be written to the `Writable`. Will complete
 -- | after all data is written and flushed.

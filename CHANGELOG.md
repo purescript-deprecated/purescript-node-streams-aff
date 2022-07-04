@@ -12,6 +12,12 @@ Bugfixes:
 
 Other improvements:
 
+## [Unreleased]
+
+Bugfixes:
+
+* Read from zero-length `Readable`.
+
 # v3.0.0
 
 Breaking changes:
