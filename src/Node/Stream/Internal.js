@@ -14,14 +14,10 @@ export const onceDrain = s => f => () => {
 }
 
 export const onceError = s => f => () => {
-  s.once('error', f);
+  s.once('error', error => f(error)());
   return () => {s.removeListener('error', f);};
 }
 
 export const readable = s => () => {
     return s.readable;
-}
-
-export const writeStreamClose = s => cb => () => {
-  return s.close(cb);
 }

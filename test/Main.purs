@@ -21,7 +21,7 @@ import Node.Buffer (Buffer, concat)
 import Node.Buffer as Buffer
 import Node.Encoding (Encoding(..))
 import Node.FS.Stream (createReadStream, createWriteStream)
-import Node.Stream.Aff (readAll, readN, readSome, writableClose, write)
+import Node.Stream.Aff (end, readAll, readN, readSome, write)
 import Partial.Unsafe (unsafePartial)
 import Test.Spec (describe, it)
 import Test.Spec.Assertions (expectError, shouldEqual)
@@ -62,7 +62,7 @@ main = unsafePartial $ do
           outfile <- liftEffect $ createWriteStream outfilename
           b <- liftEffect $ Buffer.fromString "test" UTF8
           write outfile [b]
-          writableClose outfile
+          end outfile
           expectError $ write outfile [b]
 
     pure (pure unit)

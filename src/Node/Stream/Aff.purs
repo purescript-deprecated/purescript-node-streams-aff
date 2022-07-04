@@ -6,9 +6,6 @@
 -- | Open __process streams__ with
 -- | [__Node.Process__](https://pursuit.purescript.org/packages/purescript-node-process/docs/Node.Process).
 -- |
--- | Read and write __`String`__s with the `toString` and `fromString` functions in
--- | [__Node.Buffer__](https://pursuit.purescript.org/packages/purescript-node-buffer/docs/Node.Buffer#t:MutableBuffer).
--- |
 -- | All __I/O errors__ will be thrown through the `Aff` `MonadError` class
 -- | instance.
 -- |
@@ -81,7 +78,9 @@ module Node.Stream.Aff
   , readAll
   , readN
   , write
-  , writableClose
+  , end
+  , toStringUTF8
+  , fromStringUTF8
   )
   where
 
@@ -95,14 +94,16 @@ import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..))
 import Effect (Effect, untilE)
-import Effect.Aff (effectCanceler, makeAff)
+import Effect.Aff (effectCanceler, makeAff, nonCanceler)
 import Effect.Aff.Class (class MonadAff, liftAff)
+import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Exception (catchException)
 import Node.Buffer (Buffer)
 import Node.Buffer as Buffer
+import Node.Encoding as Encoding
 import Node.Stream (Readable, Writable)
 import Node.Stream as Stream
-import Node.Stream.Aff.Internal (onceDrain, onceEnd, onceError, onceReadable, readable, writeStreamClose)
+import Node.Stream.Aff.Internal (onceDrain, onceEnd, onceError, onceReadable, readable)
 
 
 -- | Wait until there is some data available from the stream, then read it.
@@ -375,21 +376,29 @@ write w bs = liftAff <<< makeAff $ \res -> do
     removeError
     join $ liftST $ ST.Ref.read removeDrain
 
--- | Close a `Writable` file stream.
+-- | Signal that no more data will be written to the `Writable`. Will complete
+-- | after all data is written and flushed.
 -- |
--- | Will complete after the file stream is closed.
-writableClose
+-- | When the `Writable` is an [__fs.WriteStream__](https://nodejs.org/api/fs.html#class-fswritestream)
+-- | then this will close the file descriptor because
+-- |
+-- | > “If `autoClose` is set to true (default behavior) on `'error'`
+-- | > or `'finish'` the file descriptor will be closed automatically.”
+end
   :: forall m w
    . MonadAff m
   => Writable w
   -> m Unit
-writableClose w = liftAff <<< makeAff $ \res -> do
+end w = liftAff <<< makeAff $ \res -> do
+  Stream.end w $ case _ of
+    Nothing -> res (Right unit)
+    Just err -> res (Left err)
+  pure $ nonCanceler
 
-  removeError <- onceError w $ res <<< Left
+  -- | Concatenate an `Array` of UTF-8 encoded `Buffer`s into a `String`.
+toStringUTF8 :: forall m. MonadEffect m => Array Buffer -> m String
+toStringUTF8 bs = liftEffect $ Buffer.toString Encoding.UTF8 =<< Buffer.concat bs
 
-  writeStreamClose w do
-    removeError
-    res (Right unit)
-
-  pure $ effectCanceler do
-    removeError
+-- | Encode a `String` as an `Array` containing one UTF-8 encoded `Buffer`.
+fromStringUTF8 :: forall m. MonadEffect m => String -> m (Array Buffer)
+fromStringUTF8 s = liftEffect $ map pure $ Buffer.fromString s Encoding.UTF8
