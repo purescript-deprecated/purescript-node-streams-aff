@@ -7,13 +7,20 @@ module Node.Stream.Aff.Internal
   , onceError
   , onceReadable
   , readable
+  , push
+  , newReadable
+  , newReadableStringUTF8
   )
   where
 
 import Prelude
 
+import Data.Nullable (Nullable, notNull, null)
 import Effect (Effect)
 import Effect.Exception (Error)
+import Node.Buffer (Buffer)
+import Node.Buffer as Buffer
+import Node.Encoding as Encoding
 import Node.Stream (Readable, Stream, Writable)
 
 -- | Listen for one `readable` event, call the callback, then remove
@@ -69,3 +76,27 @@ foreign import readable
   :: forall r
    . Readable r
   -> Effect Boolean
+
+
+-- | [`readable.push(chunk[, encoding])`](https://nodejs.org/api/stream.html#readablepushchunk-encoding)
+foreign import push
+  :: forall r
+   . Readable r
+  -> Nullable Buffer
+  -> Effect Boolean
+
+-- | `new stream.Readable()`
+foreign import newReadable
+  :: forall r
+   . Effect (Readable r)
+
+-- | Construct a `Readable` from a `String`.
+newReadableStringUTF8
+  :: forall r
+   . String
+  -> Effect (Readable r)
+newReadableStringUTF8 strng = do
+  rstream <- newReadable
+  _ <- push rstream =<< (notNull <$> Buffer.fromString strng Encoding.UTF8)
+  _ <- push rstream null -- the end of the stream
+  pure rstream

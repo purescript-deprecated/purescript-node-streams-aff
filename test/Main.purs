@@ -10,34 +10,27 @@ module Test.Main where
 import Prelude
 
 import Data.Array as Array
-import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..), fst)
 import Effect (Effect)
-import Effect.Aff (Error, Milliseconds(..), runAff_)
+import Effect.Aff (Milliseconds(..), launchAff_)
 import Effect.Class (liftEffect)
-import Effect.Class.Console as Console
 import Node.Buffer (Buffer, concat)
 import Node.Buffer as Buffer
 import Node.Encoding (Encoding(..))
 import Node.FS.Stream (createReadStream, createWriteStream)
-import Node.Stream.Aff (end, readAll, readN, readSome, write)
+import Node.Stream.Aff (end, readAll, readN, readSome, toStringUTF8, write)
+import Node.Stream.Aff.Internal (newReadableStringUTF8)
 import Partial.Unsafe (unsafePartial)
 import Test.Spec (describe, it)
 import Test.Spec.Assertions (expectError, shouldEqual)
 import Test.Spec.Reporter (consoleReporter)
-import Test.Spec.Runner (defaultConfig, runSpecT)
-import Unsafe.Coerce (unsafeCoerce)
-
-completion :: Either Error (Effect Unit) -> Effect Unit
-completion = case _ of
-  Left e -> Console.error (unsafeCoerce e)
-  Right f -> f
+import Test.Spec.Runner (defaultConfig, runSpec')
 
 main :: Effect Unit
 main = unsafePartial $ do
-  runAff_ completion do
-    void $ runSpecT (defaultConfig {timeout = Just (Milliseconds 10000.0)}) [consoleReporter] do
+  launchAff_ do
+    runSpec' (defaultConfig {timeout = Just (Milliseconds 20000.0)}) [consoleReporter] do
       describe "Node.Stream.Aff" do
         it "writes and reads" do
           let outfilename = "/tmp/test1.txt"
@@ -56,7 +49,7 @@ main = unsafePartial $ do
           let inputs = input1 <> input2 <> input3
           input :: Buffer <- liftEffect $ concat inputs
           inputSize <- liftEffect $ Buffer.size input
-          shouldEqual (10 * magnitude) inputSize
+          shouldEqual inputSize (10 * magnitude)
         it "writes and closes" do
           let outfilename = "/tmp/test2.txt"
           outfile <- liftEffect $ createWriteStream outfilename
@@ -64,5 +57,13 @@ main = unsafePartial $ do
           write outfile [b]
           end outfile
           expectError $ write outfile [b]
+        it "reads from a zero-length Readable" do
+          r <- liftEffect $ newReadableStringUTF8 ""
+          b1 <- toStringUTF8 =<< (fst <$> readSome r)
+          shouldEqual "" b1
+          b2 <- toStringUTF8 =<< (fst <$> readAll r)
+          shouldEqual "" b2
+          b3 <- toStringUTF8 =<< (fst <$> readN r 0)
+          shouldEqual "" b3
 
-    pure (pure unit)
+    pure unit
