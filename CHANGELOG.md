@@ -12,13 +12,13 @@ Bugfixes:
 
 Other improvements:
 
-## [Unreleased]
+## v4.0.0
 
 Bugfixes:
 
 * Read from zero-length `Readable`.
 
-# v3.0.0
+## v3.0.0
 
 Breaking changes:
 
@@ -32,10 +32,10 @@ Bugfixes:
 
 * Bugfix `onceError`.
 
-# v2.0.0
+## v2.0.0
 
 * Aff cancellation is correctly handled.
 
-# v1.1.0
+## v1.1.0
 
 * `write` will throw errors after `drain` event.
