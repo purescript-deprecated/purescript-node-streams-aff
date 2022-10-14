@@ -81,8 +81,7 @@ module Node.Stream.Aff
   , end
   , toStringUTF8
   , fromStringUTF8
-  )
-  where
+  ) where
 
 import Prelude
 
@@ -104,7 +103,6 @@ import Node.Encoding as Encoding
 import Node.Stream (Readable, Writable)
 import Node.Stream as Stream
 import Node.Stream.Aff.Internal (onceDrain, onceEnd, onceError, onceReadable, readable)
-
 
 -- | Wait until there is some data available from the stream, then read it.
 -- |
@@ -140,43 +138,42 @@ readSome r = liftAff <<< makeAff $ \res -> do
         removeEnd
         res (Right (Tuple [] false))
 
-
   ret1 <- liftST $ Array.ST.unsafeFreeze bufs
   readagain <- readable r
-  removeReadable <- if readagain && Array.length ret1 == 0 then do
-    -- if still readable and we couldn't read anything right away,
-    -- then wait for the readable event.
-    -- “The 'readable' event will also be emitted once the end of the
-    -- stream data has been reached but before the 'end' event is emitted.”
-    -- if not readable then this was a zero-length Readable stream.
-    -- https://nodejs.org/api/stream.html#event-readable
-    onceReadable r do
-      catchException (res <<< Left) do
-        untilE do
-          Stream.read r Nothing >>= case _ of
-            Nothing -> pure true
-            Just chunk -> do
-              void $ liftST $ Array.ST.push chunk bufs
-              pure false
-        ret2 <- liftST $ Array.ST.unsafeFreeze bufs
-        removeError
-        removeEnd
-        readagain2 <- readable r
-        res (Right (Tuple ret2 readagain2))
+  removeReadable <-
+    if readagain && Array.length ret1 == 0 then do
+      -- if still readable and we couldn't read anything right away,
+      -- then wait for the readable event.
+      -- “The 'readable' event will also be emitted once the end of the
+      -- stream data has been reached but before the 'end' event is emitted.”
+      -- if not readable then this was a zero-length Readable stream.
+      -- https://nodejs.org/api/stream.html#event-readable
+      onceReadable r do
+        catchException (res <<< Left) do
+          untilE do
+            Stream.read r Nothing >>= case _ of
+              Nothing -> pure true
+              Just chunk -> do
+                void $ liftST $ Array.ST.push chunk bufs
+                pure false
+          ret2 <- liftST $ Array.ST.unsafeFreeze bufs
+          removeError
+          removeEnd
+          readagain2 <- readable r
+          res (Right (Tuple ret2 readagain2))
 
     -- return what we read right away
-  else do
-    removeError
-    removeEnd
-    res (Right (Tuple ret1 readagain))
-    pure (pure unit) -- dummy canceller
+    else do
+      removeError
+      removeEnd
+      res (Right (Tuple ret1 readagain))
+      pure (pure unit) -- dummy canceller
 
   -- canceller might by called while waiting for `onceReadable`
   pure $ effectCanceler do
     removeError
     removeEnd
     removeReadable
-
 
 -- | Read all data until the end of the stream.
 -- |
@@ -243,7 +240,6 @@ readAll r = liftAff <<< makeAff $ \res -> do
     removeEnd
     join $ Ref.read removeReadable
 
-
 -- | Wait for *N* bytes to become available from the stream.
 -- |
 -- | If more than *N* bytes are available on the stream, then
@@ -288,12 +284,12 @@ readN r n = liftAff <<< makeAff $ \res -> do
           -- “If size bytes are not available to be read, null will be returned
           -- unless the stream has ended, in which case all of the data remaining
           -- in the internal buffer will be returned.”
-          Stream.read r (Just (n-red)) >>= case _ of
+          Stream.read r (Just (n - red)) >>= case _ of
             Nothing -> pure true
             Just chunk -> do
               _ <- liftST $ Array.ST.push chunk bufs
               s <- Buffer.size chunk
-              red' <- Ref.modify (_+s) redRef
+              red' <- Ref.modify (_ + s) redRef
               if red' >= n then
                 pure true
               else
@@ -331,7 +327,6 @@ readN r n = liftAff <<< makeAff $ \res -> do
     removeEnd
     join $ Ref.read removeReadable
 
-
 -- | Write to a stream.
 -- |
 -- | Will complete after the data is flushed to the stream.
@@ -368,7 +363,7 @@ write w bs = liftAff <<< makeAff $ \res -> do
             Nothing -> do
               pure true
             Just chunk -> do
-              isLast <- liftST $ (_==0) <$> Array.length <$> Array.ST.unsafeFreeze bufs
+              isLast <- liftST $ (_ == 0) <$> Array.length <$> Array.ST.unsafeFreeze bufs
               nobackpressure <- Stream.write w chunk (if isLast then callbackLast else callback)
               if nobackpressure then do
                 pure false
@@ -403,7 +398,7 @@ end w = liftAff <<< makeAff $ \res -> do
     Just err -> res (Left err)
   pure $ nonCanceler
 
-  -- | Concatenate an `Array` of UTF-8 encoded `Buffer`s into a `String`.
+-- | Concatenate an `Array` of UTF-8 encoded `Buffer`s into a `String`.
 toStringUTF8 :: forall m. MonadEffect m => Array Buffer -> m String
 toStringUTF8 bs = liftEffect $ Buffer.toString Encoding.UTF8 =<< Buffer.concat bs
 

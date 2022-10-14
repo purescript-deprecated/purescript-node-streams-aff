@@ -30,7 +30,7 @@ import Test.Spec.Runner (defaultConfig, runSpec')
 main :: Effect Unit
 main = unsafePartial $ do
   launchAff_ do
-    runSpec' (defaultConfig {timeout = Just (Milliseconds 20000.0)}) [consoleReporter] do
+    runSpec' (defaultConfig { timeout = Just (Milliseconds 40000.0) }) [ consoleReporter ] do
       describe "Node.Stream.Aff" do
         it "writes and reads" do
           let outfilename = "/tmp/test1.txt"
@@ -54,9 +54,9 @@ main = unsafePartial $ do
           let outfilename = "/tmp/test2.txt"
           outfile <- liftEffect $ createWriteStream outfilename
           b <- liftEffect $ Buffer.fromString "test" UTF8
-          write outfile [b]
+          write outfile [ b ]
           end outfile
-          expectError $ write outfile [b]
+          expectError $ write outfile [ b ]
         it "reads from a zero-length Readable" do
           r <- liftEffect $ newReadableStringUTF8 ""
           b1 <- toStringUTF8 =<< (fst <$> readSome r)

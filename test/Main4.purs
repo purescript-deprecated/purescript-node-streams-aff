@@ -28,11 +28,10 @@ completion = case _ of
   Left e -> Console.error (unsafeCoerce e)
   Right f -> f
 
-
 main :: Effect Unit
 main = unsafePartial $ do
   runAff_ completion do
-    runSpec [consoleReporter] do
+    runSpec [ consoleReporter ] do
       describe "Node.Stream.Aff" do
         it "reads 1" do
           sequential $ alt

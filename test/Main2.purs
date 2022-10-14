@@ -25,7 +25,6 @@ completion = case _ of
   Left e -> Console.error (unsafeCoerce e)
   Right f -> f
 
-
 main :: Effect Unit
 main = unsafePartial $ do
   runAff_ completion do

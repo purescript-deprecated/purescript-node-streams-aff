@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
     branches: [main]
 
@@ -37,8 +38,8 @@ jobs:
       - name: Run tests
         run: spago -x spago-dev.dhall test --no-install
 
-      # - name: Check formatting
-      #   run: purs-tidy check src test
+      - name: Check formatting
+        run: purs-tidy check src test
 
       - name: Verify Bower & Pulp
         run: |
