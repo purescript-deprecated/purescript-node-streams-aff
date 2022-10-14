@@ -1,16 +1,20 @@
 
-# node-streams-aff
+# purescript-node-streams-aff
 
-[![CI](https://github.com/jamesdbrock/purescript-node-streams-aff/workflows/CI/badge.svg?branch=main)](https://github.com/jamesdbrock/purescript-node-streams-aff/actions?query=workflow%3ACI+branch%3Amain)
+[![Latest release](http://img.shields.io/github/release/purescript-node/purescript-node-streams-aff.svg)](https://github.com/purescript-node/purescript-node-streams-aff/releases)
+[![CI](https://github.com/purescript-node/purescript-node-streams-aff/workflows/CI/badge.svg?branch=main)](https://github.com/purescript-node/purescript-node-streams-aff/actions?query=workflow%3ACI+branch%3Amain)
 [![Pursuit](https://pursuit.purescript.org/packages/purescript-node-streams-aff/badge)](https://pursuit.purescript.org/packages/purescript-node-streams-aff)
 
-Asynchronous PureScript API for [*Node.js* Stream](https://nodejs.org/docs/latest/api/stream.html).
+Asynchronous PureScript [`Aff`](https://pursuit.purescript.org/packages/purescript-aff) API for [*Node.js* Stream](https://nodejs.org/docs/latest/api/stream.html).
 
-## Prior art
+## Installation
 
-* https://pursuit.purescript.org/packages/purescript-node-fs-aff/docs/Node.FS.Aff
-* https://pursuit.purescript.org/packages/purescript-node-fs/docs/Node.FS.Async
-* https://pursuit.purescript.org/packages/purescript-node-coroutines
-* https://pursuit.purescript.org/packages/purescript-idiomatic-node-stream
-* https://dgopsq.space/blog/reading-from-stdin-using-purescript
-* https://github.com/purescript-contrib/pulp/blob/master/src/Pulp/System/Stream.purs
+```
+spago install node-streams-aff
+```
+
+## Documentation
+
+Module documentation is [published on Pursuit](http://pursuit.purescript.org/packages/purescript-node-streams-aff).
+
+

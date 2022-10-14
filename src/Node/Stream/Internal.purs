@@ -10,8 +10,7 @@ module Node.Stream.Aff.Internal
   , push
   , newReadable
   , newReadableStringUTF8
-  )
-  where
+  ) where
 
 import Prelude
 
@@ -76,7 +75,6 @@ foreign import readable
   :: forall r
    . Readable r
   -> Effect Boolean
-
 
 -- | [`readable.push(chunk[, encoding])`](https://nodejs.org/api/stream.html#readablepushchunk-encoding)
 foreign import push

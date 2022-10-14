@@ -34,12 +34,12 @@ completion = case _ of
 main :: Effect Unit
 main = unsafePartial $ do
   runAff_ completion do
-    runSpec [consoleReporter] do
+    runSpec [ consoleReporter ] do
       describe "Node.Stream.Aff" do
         it "reads 1" do
           infile <- liftEffect $ createReadStream =<< pure <<< flip Array.unsafeIndex 2 =<< argv
           Tuple inputs1 _ <- readN infile 500000
-          bytesRead1 :: Int <- liftEffect $ Array.foldM (\a b -> (a+_) <$> Buffer.size b) 0 inputs1
+          bytesRead1 :: Int <- liftEffect $ Array.foldM (\a b -> (a + _) <$> Buffer.size b) 0 inputs1
           shouldEqual 500000 bytesRead1
           Tuple inputs2 _ <- readSome infile
           Tuple inputs3 _ <- readAll infile
@@ -49,8 +49,7 @@ main = unsafePartial $ do
           -- inputs4 <- readSome infile
           -- inputs4 <- readN infile 10
           -- let inputs = inputs1 <> inputs2 <> inputs3 <> inputs4
-          bytesRead :: Int
-              <- liftEffect $ Array.foldM (\a b -> (a+_) <$> Buffer.size b) 0 inputs
+          bytesRead :: Int <- liftEffect $ Array.foldM (\a b -> (a + _) <$> Buffer.size b) 0 inputs
           shouldEqual 1000000 bytesRead
           input :: Buffer <- liftEffect $ concat inputs
           inputSize <- liftEffect $ Buffer.size input
