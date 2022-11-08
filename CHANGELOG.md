@@ -12,6 +12,16 @@ Bugfixes:
 
 Other improvements:
 
+## v4.0.1
+
+Breaking changes:
+
+New features:
+
+Bugfixes:
+
+Other improvements:
+
 * Transferred to https://github.com/purescript-node org (#7 by @jamesdbrock)
 
 ## v4.0.0
