@@ -10,18 +10,29 @@ export const onceEnd = s => f => () => {
   return () => {s.removeListener('end', f);};
 }
 
+export const onceClose = s => f => () => {
+  s.once('close', f);
+  return () => {s.removeListener('close', f);};
+}
+
 export const onceDrain = s => f => () => {
   s.once('drain', f);
   return () => {s.removeListener('drain', f);};
 }
 
+// https://nodejs.org/api/events.html#emitteronceeventname-listener
 export const onceError = s => f => () => {
-  s.once('error', error => f(error)());
-  return () => {s.removeListener('error', f);};
+  const listener = error => f(error)();
+  s.once('error', listener);
+  return () => {s.removeListener('error', listener);};
 }
 
 export const readable = s => () => {
   return s.readable;
+}
+
+export const writable = s => () => {
+  return s.writable;
 }
 
 export const push = s => buf => () => {
@@ -30,4 +41,8 @@ export const push = s => buf => () => {
 
 export const newReadable = () => {
   return new stream.Readable();
+}
+
+export const newStreamPassThroughImpl = () => {
+  return new stream.PassThrough();
 }

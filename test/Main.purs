@@ -9,18 +9,20 @@ module Test.Main where
 
 import Prelude
 
+import Control.Parallel (parSequence_)
+import Data.Array ((..))
 import Data.Array as Array
+import Data.Foldable (for_)
 import Data.Maybe (Maybe(..))
-import Data.Tuple (Tuple(..), fst)
 import Effect (Effect)
-import Effect.Aff (Milliseconds(..), launchAff_)
+import Effect.Aff (Aff, Milliseconds(..), launchAff_)
 import Effect.Class (liftEffect)
 import Node.Buffer (Buffer, concat)
 import Node.Buffer as Buffer
-import Node.Encoding (Encoding(..))
 import Node.FS.Stream (createReadStream, createWriteStream)
-import Node.Stream.Aff (end, readAll, readN, readSome, toStringUTF8, write)
-import Node.Stream.Aff.Internal (newReadableStringUTF8)
+import Node.Stream (destroy)
+import Node.Stream.Aff (end, fromStringUTF8, readAll, readN, readSome, toStringUTF8, write)
+import Node.Stream.Aff.Internal (newReadableStringUTF8, newStreamPassThrough)
 import Partial.Unsafe (unsafePartial)
 import Test.Spec (describe, it)
 import Test.Spec.Assertions (expectError, shouldEqual)
@@ -32,38 +34,128 @@ main = unsafePartial $ do
   launchAff_ do
     runSpec' (defaultConfig { timeout = Just (Milliseconds 40000.0) }) [ consoleReporter ] do
       describe "Node.Stream.Aff" do
-        it "writes and reads" do
+        it "PassThrough" do
+          s <- newStreamPassThrough
+          _ <- write s =<< fromStringUTF8 "test"
+          end s
+          b1 <- toStringUTF8 =<< readAll s
+          shouldEqual b1 "test"
+        it "overflow PassThrough" do
+          s <- newStreamPassThrough
+          let magnitude = 10000
+          [ outstring ] <- fromStringUTF8 "aaaaaaaaaa"
+          parSequence_
+            [ write s $ Array.replicate magnitude outstring
+            , void $ readSome s
+            ]
+        it "reads from a zero-length Readable" do
+          r <- newReadableStringUTF8 ""
+          -- readSome should return readagain false
+          shouldEqual { buffers: "", readagain: true } =<< toStringBuffers =<< readSome r
+          shouldEqual "" =<< toStringUTF8 =<< readAll r
+          shouldEqual { buffers: "", readagain: false } =<< toStringBuffers =<< readN r 0
+        it "readN cleans up event handlers" do
+          s <- newReadableStringUTF8 ""
+          for_ (0 .. 100) \_ -> void $ readN s 0
+        it "readSome cleans up event handlers" do
+          s <- newReadableStringUTF8 ""
+          for_ (0 .. 100) \_ -> void $ readSome s
+        it "readAll cleans up event handlers" do
+          s <- newReadableStringUTF8 ""
+          for_ (0 .. 100) \_ -> void $ readAll s
+        it "write cleans up event handlers" do
+          s <- newStreamPassThrough
+          [ b ] <- fromStringUTF8 "x"
+          for_ (0 .. 100) \_ -> void $ write s [ b ]
+        it "readSome from PassThrough" do
+          s <- newStreamPassThrough
+          write s =<< fromStringUTF8 "test"
+          end s
+          -- The first readSome readagain will be true, that's not good
+          shouldEqual { buffers: "test", readagain: true } =<< toStringBuffers =<< readSome s
+          shouldEqual { buffers: "", readagain: false } =<< toStringBuffers =<< readSome s
+        it "readSome from PassThrough concurrent" do
+          s <- newStreamPassThrough
+          parSequence_
+            [ do
+                shouldEqual { buffers: "test", readagain: true } =<< toStringBuffers =<< readSome s
+                -- This is rediculous behavior
+                shouldEqual { buffers: "", readagain: true } =<< toStringBuffers =<< readSome s
+                shouldEqual { buffers: "", readagain: false } =<< toStringBuffers =<< readSome s
+            , do
+                write s =<< fromStringUTF8 "test"
+                end s
+            ]
+        it "readAll from PassThrough concurrent" do
+          s <- newStreamPassThrough
+          parSequence_
+            [ do
+                shouldEqual "test" =<< toStringUTF8 =<< readAll s
+            , do
+                write s =<< fromStringUTF8 "test"
+                end s
+            ]
+        it "readAll from empty PassThrough concurrent" do
+          s <- newStreamPassThrough
+          parSequence_
+            [ shouldEqual "" =<< toStringUTF8 =<< readAll s
+            , end s
+            ]
+        it "readSome from destroyed PassThrough" do
+          s <- newStreamPassThrough
+          liftEffect $ destroy s
+          shouldEqual { buffers: "", readagain: false } =<< toStringBuffers =<< readSome s
+        it "readSome from destroyed PassThrough concurrent" do
+          s <- newStreamPassThrough
+          parSequence_
+            [ shouldEqual { buffers: "", readagain: false } =<< toStringBuffers =<< readSome s
+            , liftEffect $ destroy s
+            ]
+        it "readAll from destroyed PassThrough concurrent " do
+          s <- newStreamPassThrough
+          parSequence_
+            [ shouldEqual "" =<< toStringUTF8 =<< readAll s
+            , liftEffect $ destroy s
+            ]
+        it "readN from destroyed PassThrough concurrent " do
+          s <- newStreamPassThrough
+          parSequence_
+            [ shouldEqual { buffers: "", readagain: false } =<< toStringBuffers =<< readN s 1
+            , liftEffect $ destroy s
+            ]
+        it "write to destroyed PassThrough" do
+          s <- newStreamPassThrough
+          liftEffect $ destroy s
+          expectError $ write s =<< fromStringUTF8 "test"
+        it "writes and reads to file" do
           let outfilename = "/tmp/test1.txt"
           let magnitude = 100000
           outfile <- liftEffect $ createWriteStream outfilename
-          outstring <- liftEffect $ Buffer.fromString "aaaaaaaaaa" UTF8
+          [ outstring ] <- fromStringUTF8 "aaaaaaaaaa"
           write outfile $ Array.replicate magnitude outstring
           infile <- liftEffect $ createReadStream outfilename
-          Tuple input1 _ <- readSome infile
-          Tuple input2 _ <- readN infile (5 * magnitude)
-          Tuple input3 readagain <- readAll infile
-          shouldEqual readagain false
-          _ :: Buffer <- liftEffect <<< concat <<< fst =<< readSome infile
+          { buffers: input1 } <- readSome infile
+          { buffers: input2 } <- readN infile (5 * magnitude)
+          input3 <- readAll infile
+          _ :: Buffer <- liftEffect <<< concat <<< _.buffers =<< readSome infile
           void $ readN infile 1
           void $ readAll infile
           let inputs = input1 <> input2 <> input3
           input :: Buffer <- liftEffect $ concat inputs
           inputSize <- liftEffect $ Buffer.size input
           shouldEqual inputSize (10 * magnitude)
-        it "writes and closes" do
+        it "writes and closes file" do
           let outfilename = "/tmp/test2.txt"
           outfile <- liftEffect $ createWriteStream outfilename
-          b <- liftEffect $ Buffer.fromString "test" UTF8
-          write outfile [ b ]
+          write outfile =<< fromStringUTF8 "test"
           end outfile
-          expectError $ write outfile [ b ]
-        it "reads from a zero-length Readable" do
-          r <- liftEffect $ newReadableStringUTF8 ""
-          b1 <- toStringUTF8 =<< (fst <$> readSome r)
-          shouldEqual "" b1
-          b2 <- toStringUTF8 =<< (fst <$> readAll r)
-          shouldEqual "" b2
-          b3 <- toStringUTF8 =<< (fst <$> readN r 0)
-          shouldEqual "" b3
+          expectError $ write outfile =<< fromStringUTF8 "test2"
 
     pure unit
+
+toStringBuffers
+  :: { buffers :: Array Buffer, readagain :: Boolean }
+  -> Aff { buffers :: String, readagain :: Boolean }
+toStringBuffers { buffers, readagain } = do
+  buffers' <- toStringUTF8 buffers
+  pure { buffers: buffers', readagain }

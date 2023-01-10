@@ -4,23 +4,27 @@
 module Node.Stream.Aff.Internal
   ( onceDrain
   , onceEnd
+  , onceClose
   , onceError
   , onceReadable
   , readable
+  , writable
   , push
   , newReadable
   , newReadableStringUTF8
+  , newStreamPassThrough
   ) where
 
 import Prelude
 
 import Data.Nullable (Nullable, notNull, null)
 import Effect (Effect)
+import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Exception (Error)
 import Node.Buffer (Buffer)
 import Node.Buffer as Buffer
 import Node.Encoding as Encoding
-import Node.Stream (Readable, Stream, Writable)
+import Node.Stream (Readable, Stream, Writable, Duplex)
 
 -- | Listen for one `readable` event, call the callback, then remove
 -- | the event listener.
@@ -41,6 +45,17 @@ foreign import onceReadable
 foreign import onceEnd
   :: forall r
    . Readable r
+  -> Effect Unit
+  -> Effect (Effect Unit)
+
+-- | Listen for one `close` event, call the callback, then remove
+-- | the event listener.
+-- |
+-- | Returns an effect for removing the event listener before the event
+-- | is raised.
+foreign import onceClose
+  :: forall s
+   . Stream s
   -> Effect Unit
   -> Effect (Effect Unit)
 
@@ -76,6 +91,11 @@ foreign import readable
    . Readable r
   -> Effect Boolean
 
+foreign import writable
+  :: forall w
+   . Writable w
+  -> Effect Boolean
+
 -- | [`readable.push(chunk[, encoding])`](https://nodejs.org/api/stream.html#readablepushchunk-encoding)
 foreign import push
   :: forall r
@@ -88,13 +108,23 @@ foreign import newReadable
   :: forall r
    . Effect (Readable r)
 
--- | Construct a `Readable` from a `String`.
+-- | Construct a UTF-8 `Readable` from a `String`.
 newReadableStringUTF8
-  :: forall r
-   . String
-  -> Effect (Readable r)
-newReadableStringUTF8 strng = do
+  :: forall r m
+   . MonadEffect m
+  => String
+  -> m (Readable r)
+newReadableStringUTF8 strng = liftEffect do
   rstream <- newReadable
   _ <- push rstream =<< (notNull <$> Buffer.fromString strng Encoding.UTF8)
   _ <- push rstream null -- the end of the stream
   pure rstream
+
+-- | “A trivial implementation of a `Transform` stream that simply passes the
+-- | input bytes across to the output.”
+-- |
+-- | [__Class: `stream.PassThrough`__](https://nodejs.org/api/stream.html#class-streampassthrough)
+newStreamPassThrough :: forall m. MonadEffect m => m Duplex
+newStreamPassThrough = liftEffect newStreamPassThroughImpl
+
+foreign import newStreamPassThroughImpl :: Effect Duplex
