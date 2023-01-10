@@ -92,7 +92,7 @@ import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..))
 import Effect (Effect, untilE)
-import Effect.Aff (effectCanceler, makeAff, nonCanceler)
+import Effect.Aff (effectCanceler, error, makeAff, nonCanceler)
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Exception (catchException)
@@ -123,57 +123,61 @@ readSome r = liftAff <<< makeAff $ \res -> do
     ret <- liftST $ Array.ST.unsafeFreeze bufs
     res (Right (Tuple ret false))
 
-  -- try to read right away.
-  catchException (res <<< Left) do
+  let
+    cleanupRethrow err = do
+      removeError
+      removeEnd
+      res (Left err)
+      pure nonCanceler
+
+  catchException cleanupRethrow do
     ifM (readable r)
       do
+        -- try to read right away.
         untilE do
           Stream.read r Nothing >>= case _ of
             Nothing -> pure true
             Just chunk -> do
               void $ liftST $ Array.ST.push chunk bufs
               pure false
+
+        ret1 <- liftST $ Array.ST.unsafeFreeze bufs
+        readagain <- readable r
+        if readagain && Array.length ret1 == 0 then do
+          -- if still readable and we couldn't read anything right away,
+          -- then wait for the readable event.
+          -- “The 'readable' event will also be emitted once the end of the
+          -- stream data has been reached but before the 'end' event is emitted.”
+          -- if not readable then this was a zero-length Readable stream.
+          -- https://nodejs.org/api/stream.html#event-readable
+          removeReadable <- onceReadable r do
+            untilE do
+              Stream.read r Nothing >>= case _ of
+                Nothing -> pure true
+                Just chunk -> do
+                  void $ liftST $ Array.ST.push chunk bufs
+                  pure false
+            ret2 <- liftST $ Array.ST.unsafeFreeze bufs
+            removeError
+            removeEnd
+            readagain2 <- readable r
+            res (Right (Tuple ret2 readagain2))
+          -- canceller might by called while waiting for `onceReadable`
+          pure $ effectCanceler do
+            removeError
+            removeEnd
+            removeReadable
+        -- else return what we read right away
+        else do
+          removeError
+          removeEnd
+          res (Right (Tuple ret1 readagain))
+          pure nonCanceler
       do
         removeError
         removeEnd
         res (Right (Tuple [] false))
-
-  ret1 <- liftST $ Array.ST.unsafeFreeze bufs
-  readagain <- readable r
-  removeReadable <-
-    if readagain && Array.length ret1 == 0 then do
-      -- if still readable and we couldn't read anything right away,
-      -- then wait for the readable event.
-      -- “The 'readable' event will also be emitted once the end of the
-      -- stream data has been reached but before the 'end' event is emitted.”
-      -- if not readable then this was a zero-length Readable stream.
-      -- https://nodejs.org/api/stream.html#event-readable
-      onceReadable r do
-        catchException (res <<< Left) do
-          untilE do
-            Stream.read r Nothing >>= case _ of
-              Nothing -> pure true
-              Just chunk -> do
-                void $ liftST $ Array.ST.push chunk bufs
-                pure false
-          ret2 <- liftST $ Array.ST.unsafeFreeze bufs
-          removeError
-          removeEnd
-          readagain2 <- readable r
-          res (Right (Tuple ret2 readagain2))
-
-    -- return what we read right away
-    else do
-      removeError
-      removeEnd
-      res (Right (Tuple ret1 readagain))
-      pure (pure unit) -- dummy canceller
-
-  -- canceller might by called while waiting for `onceReadable`
-  pure $ effectCanceler do
-    removeError
-    removeEnd
-    removeReadable
+        pure nonCanceler
 
 -- | Read all data until the end of the stream.
 -- |
@@ -211,28 +215,28 @@ readAll r = liftAff <<< makeAff $ \res -> do
             Just chunk -> do
               void $ liftST $ Array.ST.push chunk bufs
               pure false
+
+        -- then wait for the stream to be readable until the stream has ended.
+        let
+          waitToRead = do
+            removeReadable' <- onceReadable r do
+              -- “The 'readable' event will also be emitted once the end of the
+              -- stream data has been reached but before the 'end' event is emitted.”
+              untilE do
+                Stream.read r Nothing >>= case _ of
+                  Nothing -> pure true
+                  Just chunk -> do
+                    _ <- liftST $ Array.ST.push chunk bufs
+                    pure false
+              waitToRead -- this is not recursion
+            Ref.write removeReadable' removeReadable
+
+        waitToRead
+
       do
         removeError
         removeEnd
         res (Right (Tuple [] false))
-
-  -- then wait for the stream to be readable until the stream has ended.
-  let
-    waitToRead = do
-      removeReadable' <- onceReadable r do
-        -- “The 'readable' event will also be emitted once the end of the
-        -- stream data has been reached but before the 'end' event is emitted.”
-        catchException cleanupRethrow do
-          untilE do
-            Stream.read r Nothing >>= case _ of
-              Nothing -> pure true
-              Just chunk -> do
-                _ <- liftST $ Array.ST.push chunk bufs
-                pure false
-          waitToRead -- this is not recursion
-      Ref.write removeReadable' removeReadable
-
-  waitToRead
 
   -- canceller might by called while waiting for `onceReadable`
   pure $ effectCanceler do
@@ -254,6 +258,7 @@ readN
   -> Int
   -> m (Tuple (Array Buffer) Boolean)
 readN r n = liftAff <<< makeAff $ \res -> do
+  if n < 0 then res (Left $ error "read bytes must be > 0") else pure unit
   redRef <- Ref.new 0
   bufs <- liftST $ Array.ST.new
   removeReadable <- Ref.new (pure unit :: Effect Unit)
@@ -277,49 +282,47 @@ readN r n = liftAff <<< makeAff $ \res -> do
 
     -- try to read N bytes and then either return N bytes or run a continuation
     tryToRead continuation = do
-      catchException cleanupRethrow do
-        untilE do
-          red <- Ref.read redRef
-          -- https://nodejs.org/docs/latest-v15.x/api/stream.html#stream_readable_read_size
-          -- “If size bytes are not available to be read, null will be returned
-          -- unless the stream has ended, in which case all of the data remaining
-          -- in the internal buffer will be returned.”
-          Stream.read r (Just (n - red)) >>= case _ of
-            Nothing -> pure true
-            Just chunk -> do
-              _ <- liftST $ Array.ST.push chunk bufs
-              s <- Buffer.size chunk
-              red' <- Ref.modify (_ + s) redRef
-              if red' >= n then
-                pure true
-              else
-                pure false
+      untilE do
         red <- Ref.read redRef
-        if red >= n then do
-          removeError
-          removeEnd
-          ret <- liftST $ Array.ST.unsafeFreeze bufs
-          readagain <- readable r
-          res (Right (Tuple ret readagain))
-        else
-          continuation unit
+        -- https://nodejs.org/docs/latest-v15.x/api/stream.html#stream_readable_read_size
+        -- “If size bytes are not available to be read, null will be returned
+        -- unless the stream has ended, in which case all of the data remaining
+        -- in the internal buffer will be returned.”
+        Stream.read r (Just (n - red)) >>= case _ of
+          Nothing -> pure true
+          Just chunk -> do
+            _ <- liftST $ Array.ST.push chunk bufs
+            s <- Buffer.size chunk
+            red' <- Ref.modify (_ + s) redRef
+            if red' >= n then
+              pure true
+            else
+              pure false
+      red <- Ref.read redRef
+      if red >= n then do
+        removeError
+        removeEnd
+        ret <- liftST $ Array.ST.unsafeFreeze bufs
+        readagain <- readable r
+        res (Right (Tuple ret readagain))
+      else
+        continuation unit
 
-  -- try to read right away.
-  ifM (readable r)
-    do
-      tryToRead (\_ -> pure unit)
-    do
-      removeError
-      removeEnd
-      res (Right (Tuple [] false))
-
-  -- if there were not enough bytes right away, then wait for bytes to come in.
-  let
+    -- if there were not enough bytes right away, then wait for bytes to come in.
     waitToRead _ = do
       removeReadable' <- onceReadable r do
         tryToRead waitToRead
       Ref.write removeReadable' removeReadable
-  waitToRead unit
+
+  catchException cleanupRethrow do
+    -- try to read right away.
+    ifM (readable r)
+      do
+        tryToRead waitToRead
+      do
+        removeError
+        removeEnd
+        res (Right (Tuple [] false))
 
   -- canceller might by called while waiting for `onceReadable`
   pure $ effectCanceler do
@@ -355,24 +358,29 @@ write w bs = liftAff <<< makeAff $ \res -> do
         removeError
         res (Right unit)
 
-    oneWrite = do
-      catchException (res <<< Left) do
-        untilE do
-          chunkMay <- liftST $ Array.ST.shift bufs
-          case chunkMay of
-            Nothing -> do
-              pure true
-            Just chunk -> do
-              isLast <- liftST $ (_ == 0) <$> Array.length <$> Array.ST.unsafeFreeze bufs
-              nobackpressure <- Stream.write w chunk (if isLast then callbackLast else callback)
-              if nobackpressure then do
-                pure false
-              else do
-                removeDrain' <- onceDrain w oneWrite
-                void $ Ref.write removeDrain' removeDrain
-                pure true
+    cleanupRethrow err = do
+      removeError
+      join $ Ref.read removeDrain
+      res (Left err)
 
-  oneWrite
+    oneWrite = do
+      untilE do
+        chunkMay <- liftST $ Array.ST.shift bufs
+        case chunkMay of
+          Nothing -> do
+            pure true
+          Just chunk -> do
+            isLast <- liftST $ (_ == 0) <$> Array.length <$> Array.ST.unsafeFreeze bufs
+            nobackpressure <- Stream.write w chunk (if isLast then callbackLast else callback)
+            if nobackpressure then do
+              pure false
+            else do
+              removeDrain' <- onceDrain w oneWrite
+              void $ Ref.write removeDrain' removeDrain
+              pure true
+
+  catchException cleanupRethrow do
+    oneWrite
 
   -- canceller might be called while waiting for `onceDrain`
   pure $ effectCanceler do
@@ -396,7 +404,7 @@ end w = liftAff <<< makeAff $ \res -> do
   Stream.end w $ case _ of
     Nothing -> res (Right unit)
     Just err -> res (Left err)
-  pure $ nonCanceler
+  pure nonCanceler
 
 -- | Concatenate an `Array` of UTF-8 encoded `Buffer`s into a `String`.
 toStringUTF8 :: forall m. MonadEffect m => Array Buffer -> m String

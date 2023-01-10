@@ -9,7 +9,9 @@ module Test.Main where
 
 import Prelude
 
+import Data.Array ((..))
 import Data.Array as Array
+import Data.Foldable (for_)
 import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..), fst)
 import Effect (Effect)
@@ -19,8 +21,8 @@ import Node.Buffer (Buffer, concat)
 import Node.Buffer as Buffer
 import Node.Encoding (Encoding(..))
 import Node.FS.Stream (createReadStream, createWriteStream)
-import Node.Stream.Aff (end, readAll, readN, readSome, toStringUTF8, write)
-import Node.Stream.Aff.Internal (newReadableStringUTF8)
+import Node.Stream.Aff (end, fromStringUTF8, readAll, readN, readSome, toStringUTF8, write)
+import Node.Stream.Aff.Internal (newReadableStringUTF8, newStreamPassThrough)
 import Partial.Unsafe (unsafePartial)
 import Test.Spec (describe, it)
 import Test.Spec.Assertions (expectError, shouldEqual)
@@ -57,13 +59,32 @@ main = unsafePartial $ do
           write outfile [ b ]
           end outfile
           expectError $ write outfile [ b ]
+        it "PassThrough" do
+          s <- newStreamPassThrough
+          write s =<< fromStringUTF8 "test"
+          end s
+          b1 <- toStringUTF8 =<< (fst <$> readAll s)
+          shouldEqual b1 "test"
         it "reads from a zero-length Readable" do
-          r <- liftEffect $ newReadableStringUTF8 ""
+          r <- newReadableStringUTF8 ""
           b1 <- toStringUTF8 =<< (fst <$> readSome r)
           shouldEqual "" b1
           b2 <- toStringUTF8 =<< (fst <$> readAll r)
           shouldEqual "" b2
           b3 <- toStringUTF8 =<< (fst <$> readN r 0)
           shouldEqual "" b3
+        it "readN cleans up event handlers" do
+          s <- newReadableStringUTF8 ""
+          for_ (0 .. 100) \_ -> void $ readN s 0
+        it "readSome cleans up event handlers" do
+          s <- newReadableStringUTF8 ""
+          for_ (0 .. 100) \_ -> void $ readSome s
+        it "readAll cleans up event handlers" do
+          s <- newReadableStringUTF8 ""
+          for_ (0 .. 100) \_ -> void $ readAll s
+        it "write cleans up event handlers" do
+          s <- newStreamPassThrough
+          b :: Buffer <- liftEffect $ Buffer.fromString "x" UTF8
+          for_ (0 .. 100) \_ -> void $ write s [ b ]
 
     pure unit

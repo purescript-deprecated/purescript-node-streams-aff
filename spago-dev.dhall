@@ -18,6 +18,7 @@ conf //
   , "node-process"
   , "node-fs"
   , "console"
+  , "foldable-traversable"
   , "partial"
   , "unsafe-coerce"
   , "control"
