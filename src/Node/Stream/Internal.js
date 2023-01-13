@@ -26,6 +26,10 @@ export const readable = s => () => {
   return s.readable;
 }
 
+export const writable = s => () => {
+  return s.writable;
+}
+
 export const push = s => buf => () => {
   return s.push(buf);
 }

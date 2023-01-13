@@ -7,6 +7,7 @@ module Node.Stream.Aff.Internal
   , onceError
   , onceReadable
   , readable
+  , writable
   , push
   , newReadable
   , newReadableStringUTF8
@@ -76,6 +77,11 @@ foreign import onceError
 foreign import readable
   :: forall r
    . Readable r
+  -> Effect Boolean
+
+foreign import writable
+  :: forall w
+   . Writable w
   -> Effect Boolean
 
 -- | [`readable.push(chunk[, encoding])`](https://nodejs.org/api/stream.html#readablepushchunk-encoding)

@@ -9,7 +9,6 @@ import Prelude
 
 import Data.Array as Array
 import Data.Either (Either(..))
-import Data.Tuple (Tuple(..))
 import Effect (Effect)
 import Effect.Aff (Error, runAff_)
 import Effect.Class (liftEffect)
@@ -38,11 +37,11 @@ main = unsafePartial $ do
       describe "Node.Stream.Aff" do
         it "reads 1" do
           infile <- liftEffect $ createReadStream =<< pure <<< flip Array.unsafeIndex 2 =<< argv
-          Tuple inputs1 _ <- readN infile 500000
+          {buffers: inputs1} <- readN infile 500000
           bytesRead1 :: Int <- liftEffect $ Array.foldM (\a b -> (a + _) <$> Buffer.size b) 0 inputs1
           shouldEqual 500000 bytesRead1
-          Tuple inputs2 _ <- readSome infile
-          Tuple inputs3 _ <- readAll infile
+          {buffers: inputs2} <- readSome infile
+          {buffers: inputs3} <- readAll infile
           let inputs = inputs1 <> inputs2 <> inputs3
           -- TODO read after EOF will hang
           -- inputs4 <- readAll infile

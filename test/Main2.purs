@@ -30,5 +30,5 @@ main = unsafePartial $ do
   runAff_ completion do
     do
       b <- liftEffect $ Buffer.fromString "aaaaaaaaaa" UTF8
-      write stdout $ Array.replicate 100000 b
+      void $ write stdout $ Array.replicate 100000 b
     pure (pure unit)
