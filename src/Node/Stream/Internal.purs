@@ -4,6 +4,7 @@
 module Node.Stream.Aff.Internal
   ( onceDrain
   , onceEnd
+  , onceClose
   , onceError
   , onceReadable
   , readable
@@ -44,6 +45,17 @@ foreign import onceReadable
 foreign import onceEnd
   :: forall r
    . Readable r
+  -> Effect Unit
+  -> Effect (Effect Unit)
+
+-- | Listen for one `close` event, call the callback, then remove
+-- | the event listener.
+-- |
+-- | Returns an effect for removing the event listener before the event
+-- | is raised.
+foreign import onceClose
+  :: forall s
+   . Stream s
   -> Effect Unit
   -> Effect (Effect Unit)
 

@@ -10,6 +10,11 @@ export const onceEnd = s => f => () => {
   return () => {s.removeListener('end', f);};
 }
 
+export const onceClose = s => f => () => {
+  s.once('close', f);
+  return () => {s.removeListener('close', f);};
+}
+
 export const onceDrain = s => f => () => {
   s.once('drain', f);
   return () => {s.removeListener('drain', f);};

@@ -9,18 +9,18 @@ module Test.Main where
 
 import Prelude
 
-import Control.Parallel (parSequence, parSequence_)
+import Control.Parallel (parSequence_)
 import Data.Array ((..))
 import Data.Array as Array
 import Data.Foldable (for_)
 import Data.Maybe (Maybe(..))
-import Data.Tuple (Tuple(..), fst)
 import Effect (Effect)
-import Effect.Aff (Milliseconds(..), launchAff_)
+import Effect.Aff (Aff, Milliseconds(..), launchAff_)
 import Effect.Class (liftEffect)
 import Node.Buffer (Buffer, concat)
 import Node.Buffer as Buffer
 import Node.FS.Stream (createReadStream, createWriteStream)
+import Node.Stream (destroy)
 import Node.Stream.Aff (end, fromStringUTF8, readAll, readN, readSome, toStringUTF8, write)
 import Node.Stream.Aff.Internal (newReadableStringUTF8, newStreamPassThrough)
 import Partial.Unsafe (unsafePartial)
@@ -38,7 +38,7 @@ main = unsafePartial $ do
           s <- newStreamPassThrough
           _ <- write s =<< fromStringUTF8 "test"
           end s
-          b1 <- toStringUTF8 =<< (_.buffers <$> readAll s)
+          b1 <- toStringUTF8 =<< readAll s
           shouldEqual b1 "test"
         it "overflow PassThrough" do
           s <- newStreamPassThrough
@@ -63,12 +63,10 @@ main = unsafePartial $ do
           -- shouldEqual inputSize (10 * magnitude)
         it "reads from a zero-length Readable" do
           r <- newReadableStringUTF8 ""
-          b1 <- toStringUTF8 =<< (_.buffers <$> readSome r)
-          shouldEqual "" b1
-          b2 <- toStringUTF8 =<< (_.buffers <$> readAll r)
-          shouldEqual "" b2
-          b3 <- toStringUTF8 =<< (_.buffers <$> readN r 0)
-          shouldEqual "" b3
+          -- readSome should return readagain false
+          shouldEqual {buffers:"", readagain:true} =<< toStringBuffers =<< readSome r
+          shouldEqual "" =<< toStringUTF8 =<< readAll r
+          shouldEqual {buffers:"", readagain:false} =<< toStringBuffers =<< readN r 0
         it "readN cleans up event handlers" do
           s <- newReadableStringUTF8 ""
           for_ (0 .. 100) \_ -> void $ readN s 0
@@ -82,6 +80,52 @@ main = unsafePartial $ do
           s <- newStreamPassThrough
           [ b ] <- fromStringUTF8 "x"
           for_ (0 .. 100) \_ -> void $ write s [ b ]
+        it "readSome from PassThrough" do
+          s <- newStreamPassThrough
+          write s =<< fromStringUTF8 "test"
+          end s
+          -- The first readSome readagain will be true, that's not good
+          shouldEqual {buffers:"test", readagain:true} =<< toStringBuffers =<< readSome s
+          shouldEqual {buffers:"", readagain:false} =<< toStringBuffers =<< readSome s
+        it "readSome from PassThrough concurrent" do
+          s <- newStreamPassThrough
+          parSequence_
+            [ do
+              shouldEqual {buffers:"test",readagain:true} =<< toStringBuffers =<< readSome s
+              -- This is rediculous behavior
+              shouldEqual {buffers:"", readagain:true} =<< toStringBuffers =<< readSome s
+              shouldEqual {buffers:"", readagain:false} =<< toStringBuffers =<< readSome s
+            , do
+              write s =<< fromStringUTF8 "test"
+              end s
+            ]
+        it "readAll from PassThrough concurrent" do
+          s <- newStreamPassThrough
+          parSequence_
+            [ do
+              shouldEqual "test" =<< toStringUTF8 =<< readAll s
+            , do
+              write s =<< fromStringUTF8 "test"
+              end s
+            ]
+        it "readAll from empty PassThrough concurrent" do
+          s <- newStreamPassThrough
+          parSequence_
+            [ shouldEqual "" =<< toStringUTF8 =<< readAll s
+            , end s
+            ]
+        it "readSome from destroyed PassThrough" do
+          s <- newStreamPassThrough
+          parSequence_
+            [ shouldEqual {buffers:"", readagain:false} =<< toStringBuffers =<< readSome s
+            , liftEffect $ destroy s
+            ]
+        it "readAll from destroyed PassThrough" do
+          s <- newStreamPassThrough
+          parSequence_
+            [ shouldEqual "" =<< toStringUTF8 =<< readAll s
+            , liftEffect $ destroy s
+            ]
         it "writes and reads to file" do
           let outfilename = "/tmp/test1.txt"
           let magnitude = 100000
@@ -91,8 +135,7 @@ main = unsafePartial $ do
           infile <- liftEffect $ createReadStream outfilename
           {buffers:input1} <- readSome infile
           {buffers: input2} <- readN infile (5 * magnitude)
-          {buffers: input3, readagain} <- readAll infile
-          shouldEqual readagain false
+          input3 <- readAll infile
           _ :: Buffer <- liftEffect <<< concat <<< _.buffers =<< readSome infile
           void $ readN infile 1
           void $ readAll infile
@@ -108,3 +151,10 @@ main = unsafePartial $ do
           expectError $ write outfile =<< fromStringUTF8 "test2"
 
     pure unit
+
+toStringBuffers
+  :: {buffers::Array Buffer, readagain:: Boolean}
+  -> Aff {buffers::String, readagain::Boolean}
+toStringBuffers {buffers,readagain} = do
+  buffers' <- toStringUTF8 buffers
+  pure {buffers:buffers',readagain}

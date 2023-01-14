@@ -96,7 +96,6 @@ import Effect (Effect, untilE)
 import Effect.Aff (effectCanceler, error, makeAff, nonCanceler)
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (class MonadEffect, liftEffect)
-import Effect.Class.Console as Console
 import Effect.Exception (catchException)
 import Effect.Ref as Ref
 import Node.Buffer (Buffer)
@@ -104,7 +103,7 @@ import Node.Buffer as Buffer
 import Node.Encoding as Encoding
 import Node.Stream (Readable, Writable)
 import Node.Stream as Stream
-import Node.Stream.Aff.Internal (onceDrain, onceEnd, onceError, onceReadable, readable, writable)
+import Node.Stream.Aff.Internal (onceClose, onceDrain, onceEnd, onceError, onceReadable, readable)
 
 -- | Wait until there is some data available from the stream, then read it.
 -- |
@@ -120,14 +119,22 @@ readSome r = liftAff <<< makeAff $ \complete -> do
 
   removeError <- onceError r \err -> complete (Left err)
 
+  removeClose <- onceClose r do
+    -- Don't error, instead return whatever we've read.
+    removeError
+    ret <- liftST $ Array.ST.unsafeFreeze bufs
+    complete (Right {buffers:ret, readagain:false})
+
   removeEnd <- onceEnd r do
     removeError
+    removeClose
     ret <- liftST $ Array.ST.unsafeFreeze bufs
     complete (Right {buffers:ret, readagain:false})
 
   let
     cleanupRethrow err = do
       removeError
+      removeClose
       removeEnd
       complete (Left err)
       pure nonCanceler
@@ -161,22 +168,26 @@ readSome r = liftAff <<< makeAff $ \complete -> do
                   pure false
             ret2 <- liftST $ Array.ST.unsafeFreeze bufs
             removeError
+            removeClose
             removeEnd
             readagain2 <- readable r
             complete (Right {buffers:ret2, readagain:readagain2})
           -- canceller might by called while waiting for `onceReadable`
           pure $ effectCanceler do
             removeError
+            removeClose
             removeEnd
             removeReadable
         -- else return what we read right away
         else do
           removeError
+          removeClose
           removeEnd
           complete (Right {buffers: ret1, readagain})
           pure nonCanceler
       do
         removeError
+        removeClose
         removeEnd
         complete (Right { buffers: [], readagain: false})
         pure nonCanceler
@@ -188,7 +199,7 @@ readAll
   :: forall m r
    . MonadAff m
   => Readable r
-  -> m {buffers :: Array Buffer, readagain :: Boolean}
+  -> m (Array Buffer)
 readAll r = liftAff <<< makeAff $ \complete -> do
   bufs <- liftST $ Array.ST.new
   removeReadable <- Ref.new (pure unit :: Effect Unit)
@@ -200,7 +211,7 @@ readAll r = liftAff <<< makeAff $ \complete -> do
   removeEnd <- onceEnd r do
     removeError
     ret <- liftST $ Array.ST.unsafeFreeze bufs
-    complete (Right {buffers: ret, readagain: false})
+    complete (Right ret)
 
   let
     cleanupRethrow err = do
@@ -246,7 +257,7 @@ readAll r = liftAff <<< makeAff $ \complete -> do
       do
         removeError
         removeEnd
-        complete (Right {buffers: [], readagain: false})
+        complete (Right [])
         pure nonCanceler
 
 -- | Wait for *N* bytes to become available from the stream.
@@ -368,21 +379,14 @@ write w bs = liftAff <<< makeAff $ \complete -> do
               Nothing -> do
                 pure unit
               Just err -> do
-                -- Console.log $ "flush error " <> show err
                 complete (Left err)
-
-            -- Console.log $ "write nobackpressure " <> show nobackpressure <> " len " <> show (Array.length tail)
 
             if nobackpressure
               then do
-                -- Console.log "write complete"
-                oneWrite tail -- recursion
+                oneWrite tail -- recursion. Doesn't seem to stackoverflow?
               else do
-                -- Console.log "write backpressure"
                 removeDrain' <- onceDrain w (oneWrite tail)
                 Ref.write removeDrain' removeDrain
-
-
   oneWrite bs
 
   -- canceller might be called while waiting for `onceDrain`

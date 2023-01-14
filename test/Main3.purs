@@ -41,7 +41,7 @@ main = unsafePartial $ do
           bytesRead1 :: Int <- liftEffect $ Array.foldM (\a b -> (a + _) <$> Buffer.size b) 0 inputs1
           shouldEqual 500000 bytesRead1
           {buffers: inputs2} <- readSome infile
-          {buffers: inputs3} <- readAll infile
+          inputs3 <- readAll infile
           let inputs = inputs1 <> inputs2 <> inputs3
           -- TODO read after EOF will hang
           -- inputs4 <- readAll infile
