@@ -26,6 +26,6 @@
         "purescript-prelude": "^v6.0.1",
         "purescript-refs": "^v6.0.0",
         "purescript-st": "^v6.2.0",
-        "purescript-tuples": "^v7.0.0"
+        "purescript-tailrec": "^v6.1.0"
     }
 }

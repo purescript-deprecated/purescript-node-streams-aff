@@ -12,6 +12,21 @@ Bugfixes:
 
 Other improvements:
 
+## [v5.0.0](https://github.com/purescript-node/purescript-node-streams-aff/releases/tag/v5.0.0)
+
+Breaking changes:
+
+- Readers return record instead of `Tuple`. (#11 by @jamesdbrock)
+
+New features:
+
+- New `Internal` functions: `onceClose`, `writable`, `newStreamPassThrough`. (#11 by @jamesdbrock)
+
+Bugfixes:
+
+- More cleanup for event handlers. (#11 by @jamesdbrock)
+- Complete reads when stream is closed. (#11 by @jamesdbrock)
+
 ## v4.0.1
 
 Breaking changes:
